@@ -75,15 +75,15 @@
 
 ## 文件说明：
 
-│  config.py	# 配置文件
-│  v1.py		# 主程序文件
-│  __init__.py
-│
-└─proxy			# 代理相关文件夹
-   │  headers.py	# 请求头文件
-   │  main.py		# flask入口文件
-   │  proxy.py		# 爬取代理主程序文件
-   └─ __init__.py
++ │  config.py	# 配置文件
++ │  v1.py		# 主程序文件
++ │  __init__.py
++ │
++ └─proxy			# 代理相关文件夹
++    │  headers.py	# 请求头文件
++    │  main.py		# flask入口文件
++    │  proxy.py		# 爬取代理主程序文件
++    └─ __init__.py
 
 ## 运行说明：
 
