@@ -1,0 +1,4 @@
+requests
+gevent
+lxml
+redis
