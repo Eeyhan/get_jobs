@@ -18,6 +18,8 @@ import asyncio
 import os
 import sys
 import urllib3
+from joblib import Parallel, delayed
+import sys
 
 sys.path.append(os.path.dirname(__file__))
 from proxy.proxy import get_redis
@@ -38,6 +40,7 @@ class RequestHeader(object):
 
     def __init__(self):
         self.user_agent = USER_AGENT
+        self.flag = False  # 爬取标志位
 
     def request_headers(self):
         """
@@ -48,7 +51,8 @@ class RequestHeader(object):
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,application/json, text/javascript,*/*;q=0.8',
             'User-Agent': random.choice(self.user_agent),
             'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
+            # 'Connection': 'keep-alive',
+            'Connection': 'close',
             'Accept-Encoding': 'gzip, deflate',
             'Upgrade-Insecure-Requests': '1'
         }
@@ -498,7 +502,7 @@ class BaseCrawl(RequestHeader):
         遍历请求所有的url
         :return:
         """
-        proxy = self.get_proxy()
+
         for urls in self.request_urls:
             url = urls.get('url')
             url_name = urls.get('type')
@@ -508,6 +512,7 @@ class BaseCrawl(RequestHeader):
             # if not args:
             #     args = self.get_args()
             for args in self.search_args:
+                proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
                 self.request_url(url, url_name, proxy, args_urlencode, args)
 
@@ -543,6 +548,30 @@ class BaseCrawl(RequestHeader):
         cookie = req.cookies
         return cookie
 
+    def get_city_codes(self, url_name):
+        """
+        获取城市代码
+        :param url_name: url别名
+        :return:
+        """
+        if 'zhilian' in url_name:
+            city_codes = self.get_zhilian_city_code()
+        elif 'parser_ganji' == url_name:
+            city_codes = self.ganji_city_codes()
+        elif 'parser_ganji_it' == url_name:
+            city_codes = self.ganji_city_codes()
+        elif '58' in url_name:
+            city_codes = self.get_58_city_code()
+        elif 'parser_chinahr' == url_name:
+            city_codes = self.get_chinahr_city_code()
+        elif 'gongzuochong' in url_name:
+            city_codes = self.get_gzc_city_code()
+        elif 'baidu' in url_name:
+            city_codes = self.get_baidu_city_code()
+        else:
+            city_codes = []
+        return city_codes
+
     def request_url(self, url, url_name, proxy=None, args_urlencode=None, args=None):
         """
         请求对应的网址
@@ -558,73 +587,89 @@ class BaseCrawl(RequestHeader):
         if not args_urlencode:
             args_urlencode = urllib.parse.quote('python')
 
+        # 获取城市代码
+        city_codes = self.get_city_codes(url_name)
+
+        # 如果有城市代码
+        if city_codes:
+            for city_code in city_codes:
+                self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index, city_code)
+        else:
+            self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index)
+
+    def enumerate_request_urls(self, url, url_name, args, args_urlencode, proxy, index, city_code=None):
+        """
+        枚举所有的url
+        :param url: 待请求为格式化的url
+        :param url_name: url的别名
+        :param args: 搜索关键词
+        :param args_urlencode: 已编码的搜索关键词
+        :param proxy: 代理
+        :param index: 索引
+        :param city_code: 城市代码，如果为空则表示为全国地区
+        :return:
+        """
         # 最后的目标url
         target_urls = []
-        # for i in range(1, 2):
-        for i in range(1, 10000):
+
+        # for i in range(1, 2):  # 作测试使用
+        for i in range(1, 100):  # 页码总数随意，但一般情况下某个网站搜出来的职位最多就100页左右
+            # 当标志位为真，即标志该站某一页已经没有数据，该网站停止爬取，终止循环
+            if self.flag:
+                # 为其他网站的url设置初始值
+                self.flag = False
+                print('网站 %s 已无 %s 相关数据，已切换到其他网站继续爬取.....' % (url_name, index))
+                break
+
             if 'zhilian' in url_name:
-                city_codes = self.get_zhilian_city_code()
                 i *= 90
-                for city_code in city_codes:
-                    temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                    target_urls.append(temp_url)
+                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+                target_urls.append(temp_url)
 
             elif 'parser_ganji' == url_name:
-                city_codes = self.ganji_city_codes()
                 ganji_args = self.get_ganji_search_args()
                 if args in ganji_args:
                     args_value = ganji_args.get(args)
-                    for city_code in city_codes:
-                        temp_url = url.format(c=city_code, p=i, q=args_value)
-                        target_urls.append(temp_url)
+                    temp_url = url.format(c=city_code, p=i, q=args_value)
+                    target_urls.append(temp_url)
 
             elif 'parser_ganji_it' == url_name:
-                city_codes = self.ganji_city_codes()
                 i = (i - 1) * 32
-                for city_code in city_codes:
-                    temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                    target_urls.append(temp_url)
+                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+                target_urls.append(temp_url)
 
             elif '58' in url_name:
-                city_codes = self.get_58_city_code()
-                for city_code in city_codes:
-                    temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                    target_urls.append(temp_url)
+                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+                target_urls.append(temp_url)
 
             elif 'parser_chinahr' == url_name:
-                city_codes = self.get_chinahr_city_code()
-                for city_code in city_codes:
-                    temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                    target_urls.append(temp_url)
+                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+                target_urls.append(temp_url)
 
             elif 'gongzuochong' in url_name:
-                city_codes = self.get_gzc_city_code()
-                for city_code in city_codes:
-                    temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                    target_urls.append(temp_url)
+                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+                target_urls.append(temp_url)
 
             elif 'baidu' in url_name:
-                city_codes = self.get_baidu_city_code()
-                for city_code in city_codes:
-                    city_code1 = urllib.parse.quote(city_code)
-                    city_code2 = urllib.parse.quote(city_code1)
-                    if 'parser_baidu' == url_name:
-                        # 百度百聘的api把城市参数做了两层url编码
-                        token_url = 'https://zhaopin.baidu.com/quanzhi?city={c}&query={q}'.format(c=city_code1,
-                                                                                                  q=args_urlencode)
+                city_code1 = urllib.parse.quote(city_code)
+                city_code2 = urllib.parse.quote(city_code1)
+                if 'parser_baidu' == url_name:
+                    # 百度百聘的api把城市参数做了两层url编码
+                    token_url = 'https://zhaopin.baidu.com/quanzhi?city={c}&query={q}'.format(c=city_code1,
+                                                                                              q=args_urlencode)
 
-                    elif 'parser_baidu_jianzhi' == url_name:
-                        # 百度百聘的api把城市参数做了两层url编码
-                        token_url = 'https://zhaopin.baidu.com/jianzhi?city={c}&query={q}'.format(c=city_code1,
-                                                                                                  q=args_urlencode)
-                    else:
-                        token_url = ''
-                    token = self.get_baidu_token(token_url, url_name)
-                    if i == 1:
-                        i -= 1
-                    i *= 20
-                    temp_url = url.format(c=city_code2, p=i, q=args_urlencode, token=token)
-                    target_urls.append(temp_url)
+                elif 'parser_baidu_jianzhi' == url_name:
+                    # 百度百聘的api把城市参数做了两层url编码
+                    token_url = 'https://zhaopin.baidu.com/jianzhi?city={c}&query={q}'.format(c=city_code1,
+                                                                                              q=args_urlencode)
+                else:
+                    token_url = ''
+                token = self.get_baidu_token(token_url, url_name)
+                if i == 1:
+                    i -= 1
+                i *= 20
+                temp_url = url.format(c=city_code2, p=i, q=args_urlencode, token=token)
+                target_urls.append(temp_url)
 
             elif 'yjs' in url_name:
                 i -= 1
@@ -674,37 +719,58 @@ class BaseCrawl(RequestHeader):
                 temp_url = url.format(p=i, q=args_urlencode)
                 target_urls.append(temp_url)
 
-            # 遍历请求
-            # print(target_urls)
-            for target_url in target_urls:
+            # 请求
+            try:
+                self.request_format_site(target_urls, url_name, proxy, args_urlencode, i, index)
+            except BaseException as e:
+                print(e)
+                save_redis(self.jobs)
+                continue
+
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+        """
+        请求格式化好的所有url
+        :param target_urls: 所有目标url
+        :param url_name: url别名
+        :param proxy: 代理
+        :param args_urlencode: url编码后后的搜索关键词
+        :param i: 页码
+        :param index: 搜索关键词
+        :return:
+        """
+        # 遍历请求
+        # print(target_urls)
+        for target_url in target_urls:
+            try:
+                self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index)
+
+            # except requests.exceptions.ContentDecodingError:
+            #     time.sleep(1)
+            # except requests.exceptions.ConnectTimeout:
+            #     time.sleep(1)
+            # except requests.exceptions.ReadTimeout:
+            #     time.sleep(1)
+            # except urllib3.exceptions.ReadTimeoutError:
+            #     time.sleep(1)
+            # except urllib3.exceptions.ConnectTimeoutError:
+            #     time.sleep(1)
+            # except urllib3.exceptions.MaxRetryError:
+            #     time.sleep(1)
+            # except urllib3.exceptions.ProtocolError:
+            #     time.sleep(1)
+            except BaseException:
+                time.sleep(3)
+                proxy = None
+                if self.proxy_list:
+                    if proxy in self.proxy_list:
+                        self.proxy_list.remove(proxy)
+                    proxy = self.get_proxy()
                 try:
                     self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index)
-                # except requests.exceptions.ContentDecodingError:
-                #     time.sleep(1)
-                # except requests.exceptions.ConnectTimeout:
-                #     time.sleep(1)
-                # except requests.exceptions.ReadTimeout:
-                #     time.sleep(1)
-                # except urllib3.exceptions.ReadTimeoutError:
-                #     time.sleep(1)
-                # except urllib3.exceptions.ConnectTimeoutError:
-                #     time.sleep(1)
-                # except urllib3.exceptions.MaxRetryError:
-                #     time.sleep(1)
-                # except urllib3.exceptions.ProtocolError:
-                #     time.sleep(1)
-                except:
-                    time.sleep(3)
-                    proxy = None
-                    if self.proxy_list:
-                        if proxy in self.proxy_list:
-                            self.proxy_list.remove(proxy)
-                        proxy = self.get_proxy()
-                    try:
-                        self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index)
-                    except BaseException as e:
-                        print(e)
-                        continue
+
+                except BaseException as e:
+                    print(e)
+                    # save_redis(self.jobs)
 
     def request_format_url(self, url, url_name, proxy, args_urlencode, i, index):
         """
@@ -854,10 +920,7 @@ class BaseCrawl(RequestHeader):
         # 解析网站
         if response.status_code == 200:
             html = self.decode_request(response)
-            result = self.parser(html, url_name, url, args_urlencode, index=index)
-            return result
-        else:
-            pass
+            self.parser(html, url_name, url, args_urlencode, index=index)
 
     def decode_request(self, response):
         """
@@ -890,8 +953,7 @@ class BaseCrawl(RequestHeader):
 
         func = getattr(self, url_name)
         if func:
-            result = func(html, url_name, url, *args, **kwargs)
-            return result
+            func(html, url_name, url, *args, **kwargs)
 
     def second_request_parser(self, link, url_name, *args, **kwargs):
         """
@@ -902,6 +964,7 @@ class BaseCrawl(RequestHeader):
         :param kwargs:
         :return:
         """
+        time.sleep(1)
         proxy = self.get_proxy()
         if 'baidu' in url_name:
             session = self.get_session(url_name)
@@ -985,7 +1048,10 @@ class BaseCrawl(RequestHeader):
                 href = item.xpath('./dl/dd/h3/a/@href')[0]
                 link = 'https://www.kanzhun.com' + href
                 self.second_request_parser(link, url_name, *args, **kwargs)
-            return self.jobs
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_kanzhun(self, html, link=None, *args, **kwargs):
         """
@@ -1027,15 +1093,15 @@ class BaseCrawl(RequestHeader):
         job_evaluate_content = etree_html.xpath('//p[@class="c_s_result_text mb15"]/text()')
         job_evaluate = ''.join(job_evaluate_title).strip() + ',' + ''.join(job_evaluate_content).strip()
 
-        print({
-            'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': job_property,
-            'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': '', 'pub_date': '', 'end_time': '',
-            'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-            'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': job_evaluate,
-            'company_name': company_name, 'company_type': company_type, 'company_status': '', 'phone': '',
-            'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
-            'company_comment': company_comment
-        })
+        # print({
+        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': job_property,
+        #     'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': '', 'pub_date': '', 'end_time': '',
+        #     'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+        #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': job_evaluate,
+        #     'company_name': company_name, 'company_type': company_type, 'company_status': '', 'phone': '',
+        #     'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
+        #     'company_comment': company_comment
+        # })
         self.jobs.append({
             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': job_property,
             'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': '', 'pub_date': '', 'end_time': '',
@@ -1045,8 +1111,6 @@ class BaseCrawl(RequestHeader):
             'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
             'company_comment': company_comment
         })
-
-        return self.jobs
 
     def parser_boss(self, html, url_name, url=None, *args, **kwargs):
         """
@@ -1064,6 +1128,10 @@ class BaseCrawl(RequestHeader):
             for item in response:
                 link = 'https://www.zhipin.com' + item.xpath('./div[@class="info-primary"]/h3/a/@href')[0]
                 self.second_request_parser(link, url_name, *args, **kwargs)
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_boss(self, html, link=None, *args, **kwargs):
         """
@@ -1114,15 +1182,15 @@ class BaseCrawl(RequestHeader):
             pub_date = pub_date[0].split('：')[1]
         company_brief = etree_html.xpath('//div[@class="job-sec company-info"]/div[@class="text"]/text()')
         contact_person = etree_html.xpath('//h2[@class="name"]/text()')[0]
-        print({
-            'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': '',
-            'job_status': job_status, 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
-            'end_time': '', 'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '',
-            'job_brief': job_brief, 'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-            'company_name': company_name, 'company_type': company_type, 'company_status': company_status, 'phone': '',
-            'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief,
-            'contact_person': contact_person, 'company_comment': ''
-        })
+        # print({
+        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': '',
+        #     'job_status': job_status, 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
+        #     'end_time': '', 'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '',
+        #     'job_brief': job_brief, 'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+        #     'company_name': company_name, 'company_type': company_type, 'company_status': company_status, 'phone': '',
+        #     'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief,
+        #     'contact_person': contact_person, 'company_comment': ''
+        # })
         self.jobs.append({
             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': '',
             'job_status': job_status, 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
@@ -1149,6 +1217,10 @@ class BaseCrawl(RequestHeader):
             for item in response:
                 link = item.xpath('./p/span/a/@href')[0]
                 self.second_request_parser(link, url_name, *args, **kwargs)
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_51job(self, html, link=None, *args, **kwargs):
         """
@@ -1187,15 +1259,15 @@ class BaseCrawl(RequestHeader):
         company_scale = etree_html.xpath('//div[@class="com_tag"]/p[2]/@title')[0] + '/' + \
                         etree_html.xpath('//div[@class="com_tag"]/p[3]/@title')[0]
         company_brief = etree_html.xpath('//div[contains(@class,"tmsg")]/text()')[0].strip()
-        print({
-            'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type, 'job_property': '',
-            'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
-            'end_time': '', 'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '',
-            'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
-            'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
-            'company_status': '', 'phone': '', 'driver_license': '', 'company_scale': company_scale,
-            'company_brief': company_brief, 'contact_person': '', 'company_comment': ''
-        })
+        # print({
+        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type, 'job_property': '',
+        #     'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
+        #     'end_time': '', 'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '',
+        #     'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
+        #     'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
+        #     'company_status': '', 'phone': '', 'driver_license': '', 'company_scale': company_scale,
+        #     'company_brief': company_brief, 'contact_person': '', 'company_comment': ''
+        # })
         self.jobs.append({
             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type, 'job_property': '',
             'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
@@ -1241,17 +1313,17 @@ class BaseCrawl(RequestHeader):
                 link = item.get('positionURL')
                 job_addr, job_brief, job_tags, company_brief, number_recruits = self.second_request_parser(link,
                                                                                                            url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': job_property, 'job_status': job_status, 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '', 'edu': edu,
-                    'ex': ex,
-                    'marriage': '', 'lang': '', 'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link,
-                    'number_recruits': number_recruits, 'job_evaluate': '', 'company_name': company_name,
-                    'company_type': company_type, 'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
-                    'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': job_property, 'job_status': job_status, 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '', 'edu': edu,
+                #     'ex': ex,
+                #     'marriage': '', 'lang': '', 'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link,
+                #     'number_recruits': number_recruits, 'job_evaluate': '', 'company_name': company_name,
+                #     'company_type': company_type, 'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
+                #     'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': job_status, 'job_area': job_area, 'major': '',
@@ -1263,6 +1335,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
                     'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_zhilian(self, html, link=None, *args, **kwargs):
         """
@@ -1315,17 +1391,17 @@ class BaseCrawl(RequestHeader):
                     job_id, ZHUOPIN_CLIENT_ID)
                 job_addr, salary, job_brief, company_brief, job_type, number_recruits, lang, age = self.second_request_parser(
                     link, url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '', 'edu': edu,
-                    'ex': ex,
-                    'marriage': '', 'lang': lang, 'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link,
-                    'number_recruits': number_recruits, 'job_evaluate': '', 'company_name': company_name,
-                    'company_type': company_type, 'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
-                    'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '', 'edu': edu,
+                #     'ex': ex,
+                #     'marriage': '', 'lang': lang, 'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link,
+                #     'number_recruits': number_recruits, 'job_evaluate': '', 'company_name': company_name,
+                #     'company_type': company_type, 'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
+                #     'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1337,6 +1413,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
                     'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_zhuopin(self, html, link=None, *args, **kwargs):
         """
@@ -1406,17 +1486,17 @@ class BaseCrawl(RequestHeader):
                         job_brief, job_addr, job_evaluate, contact_person = self.second_request_parser(link, url_name)
                         if not job_evaluate:
                             job_evaluate = '暂无评价'
-                        print({
-                            'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                            'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                            'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                            'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                            'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': job_evaluate,
-                            'company_name': company_name, 'company_type': company_type,
-                            'company_status': company_status, 'phone': '', 'driver_license': '',
-                            'company_scale': company_scale, 'company_brief': '',
-                            'contact_person': contact_person, 'company_comment': ''
-                        })
+                        # print({
+                        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                        #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                        #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                        #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                        #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': job_evaluate,
+                        #     'company_name': company_name, 'company_type': company_type,
+                        #     'company_status': company_status, 'phone': '', 'driver_license': '',
+                        #     'company_scale': company_scale, 'company_brief': '',
+                        #     'contact_person': contact_person, 'company_comment': ''
+                        # })
                         self.jobs.append({
                             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                             'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1428,6 +1508,10 @@ class BaseCrawl(RequestHeader):
                             'company_scale': company_scale, 'company_brief': '',
                             'contact_person': contact_person, 'company_comment': ''
                         })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_lagou(self, html, link=None, *args, **kwargs):
         """
@@ -1486,17 +1570,17 @@ class BaseCrawl(RequestHeader):
                         link, url_name)
                     company_scale = company_property + '/' + company_scale
 
-                    print({
-                        'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                        'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                        'job_addr': job_addr, 'pub_date': '', 'end_time': '', 'age': '', 'sex': '',
-                        'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                        'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                        'company_name': company_name, 'company_type': company_type,
-                        'company_status': '', 'phone': '', 'driver_license': '',
-                        'company_scale': company_scale, 'company_brief': company_brief,
-                        'contact_person': contact_person, 'company_comment': ''
-                    })
+                    # print({
+                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                    #     'job_addr': job_addr, 'pub_date': '', 'end_time': '', 'age': '', 'sex': '',
+                    #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                    #     'company_name': company_name, 'company_type': company_type,
+                    #     'company_status': '', 'phone': '', 'driver_license': '',
+                    #     'company_scale': company_scale, 'company_brief': company_brief,
+                    #     'contact_person': contact_person, 'company_comment': ''
+                    # })
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1508,6 +1592,10 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': company_brief,
                         'contact_person': contact_person, 'company_comment': ''
                     })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_dajie(self, html, link=None, *args, **kwargs):
         """
@@ -1588,17 +1676,17 @@ class BaseCrawl(RequestHeader):
                             self.second_request_parser(link, url_name)
                         number_recruits, job_addr, age, lang = self.second_request_parser(link, url_name)
 
-                        print({
-                            'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                            'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                            'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                            'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
-                            'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                            'company_name': company_name, 'company_type': company_type,
-                            'company_status': '', 'phone': '', 'driver_license': '',
-                            'company_scale': company_scale, 'company_brief': company_brief,
-                            'contact_person': '', 'company_comment': ''
-                        })
+                        # print({
+                        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                        #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                        #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
+                        #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
+                        #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                        #     'company_name': company_name, 'company_type': company_type,
+                        #     'company_status': '', 'phone': '', 'driver_license': '',
+                        #     'company_scale': company_scale, 'company_brief': company_brief,
+                        #     'contact_person': '', 'company_comment': ''
+                        # })
                         self.jobs.append({
                             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                             'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1610,6 +1698,10 @@ class BaseCrawl(RequestHeader):
                             'company_scale': company_scale, 'company_brief': company_brief,
                             'contact_person': '', 'company_comment': ''
                         })
+
+                else:
+                    # 如果为空，将标志位置为真
+                    self.flag = True
 
     def second_parser_zhitong(self, html, link=None, *args, **kwargs):
         """
@@ -1664,17 +1756,17 @@ class BaseCrawl(RequestHeader):
                 if not ex:
                     ex = '不限'
 
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': '',
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': '',
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1686,6 +1778,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_cjol(self, html, link=None, *args, **kwargs):
         """
@@ -1766,17 +1862,17 @@ class BaseCrawl(RequestHeader):
                         job_title, company_name, number_recruits, company_scale, company_brief, job_brief, company_type, job_type = self.second_request_parser(
                             link, url_name)
 
-                    print({
-                        'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
-                        'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                        'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                        'edu': '', 'ex': '', 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                        'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                        'company_name': company_name, 'company_type': company_type,
-                        'company_status': '', 'phone': '', 'driver_license': '',
-                        'company_scale': company_scale, 'company_brief': '',
-                        'contact_person': '', 'company_comment': ''
-                    })
+                    # print({
+                    #     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
+                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                    #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                    #     'edu': '', 'ex': '', 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                    #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                    #     'company_name': company_name, 'company_type': company_type,
+                    #     'company_status': '', 'phone': '', 'driver_license': '',
+                    #     'company_scale': company_scale, 'company_brief': '',
+                    #     'contact_person': '', 'company_comment': ''
+                    # })
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1788,6 +1884,10 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': '',
                         'contact_person': '', 'company_comment': ''
                     })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_yjs(self, html, link=None, *args, **kwargs):
         """
@@ -1878,17 +1978,17 @@ class BaseCrawl(RequestHeader):
                 company_type, company_scale, company_link, number_recruits = self.second_request_parser(
                     link, url_name)
 
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': '',
-                    'contact_person': contact_person, 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': '',
+                #     'contact_person': contact_person, 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1900,6 +2000,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': contact_person, 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_jobcn(self, html, link=None, *args, **kwargs):
         """
@@ -1944,17 +2048,17 @@ class BaseCrawl(RequestHeader):
                 company_name, job_title, number_recruits, edu, ex, sex, job_tags, pub_date, job_brief, job_addr, end_time = self.second_request_parser(
                     link, url_name)
 
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': '', 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': '学校/兴趣班/培训机构',
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': '', 'company_brief': '',
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': '', 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': '学校/兴趣班/培训机构',
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': '', 'company_brief': '',
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1966,6 +2070,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_jiaoshizhaopin(self, html, link=None, *args, **kwargs):
         """
@@ -2049,17 +2157,17 @@ class BaseCrawl(RequestHeader):
                     edu = ''
                 if not ex:
                     ex = ''
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': '', 'company_brief': company_brief,
-                    'contact_person': contact_person, 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': '', 'company_brief': company_brief,
+                #     'contact_person': contact_person, 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2071,6 +2179,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': company_brief,
                     'contact_person': contact_person, 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_baixing(self, html, link=None, *args, **kwargs):
         """
@@ -2171,18 +2283,18 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[1]/a/@href')[0]
                 number_recruits, job_type, job_brief, job_addr, company_type, company_scale, company_brief = self.second_request_parser(
                     link, url_name)
-
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief,
-                    'contact_person': '', 'company_comment': ''
-                })
+                #
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': company_brief,
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2194,6 +2306,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_shuobo(self, html, link=None, *args, **kwargs):
         """
@@ -2267,17 +2383,17 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div/div[1]/h3/a/@href')[0]
                 lang, age, job_tags, job_brief, job_addr, company_scale, company_brief = self.second_request_parser(
                     link, url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': company_status, 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief,
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': company_status, 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': company_brief,
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2289,6 +2405,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_liepin(self, html, link=None, *args, **kwargs):
         """
@@ -2381,17 +2501,17 @@ class BaseCrawl(RequestHeader):
                 pub_date = self.get_current_date(temp_pub_date)
                 job_tags, job_addr, number_recruits, edu, ex, job_brief, age, company_name, company_scale, company_type, company_brief = self.second_request_parser(
                     link, url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': '',
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': '',
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2403,6 +2523,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_ganji(self, html, link=None, *args, **kwargs):
         """
@@ -2496,17 +2620,17 @@ class BaseCrawl(RequestHeader):
                 link = current_url + temp_link
                 job_tags, job_addr, number_recruits, edu, ex, job_brief, age, company_name, company_scale, company_type, company_brief = self.second_request_parser(
                     link, url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': '',
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': '',
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2518,6 +2642,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_ganji_it(self, html, link=None, *args, **kwargs):
         """
@@ -2601,6 +2729,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_58(self, html, link=None, *args, **kwargs):
         """
@@ -2690,18 +2822,18 @@ class BaseCrawl(RequestHeader):
                         company_comment.append(c)
                     elif isinstance(com, str):
                         company_comment.append(com)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
-                    'job_evaluate': job_evaluate,
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief,
-                    'contact_person': '', 'company_comment': company_comment
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
+                #     'job_evaluate': job_evaluate,
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': company_brief,
+                #     'contact_person': '', 'company_comment': company_comment
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2714,6 +2846,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': comments
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_chinahr(self, html, link=None, *args, **kwargs):
         """
@@ -2782,17 +2918,17 @@ class BaseCrawl(RequestHeader):
                 company_name, job_tags, sex, driver_license, job_brief, company_brief, job_property = self.second_request_parser(
                     link, url_name)
 
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': driver_license,
-                    'company_scale': company_scale, 'company_brief': company_brief,
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': driver_license,
+                #     'company_scale': company_scale, 'company_brief': company_brief,
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2804,6 +2940,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_chinahr_old(self, html, link=None, *args, **kwargs):
         """
@@ -2852,17 +2992,17 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./li[@class="search_post"]/a/@href')[0]
                 job_tags, number_recruits, job_addr, job_area, job_brief, company_type, contact_person, age, major, pub_date, company_scale, edu, ex = self.second_request_parser(
                     link, url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': major,
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': '',
-                    'contact_person': contact_person, 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': major,
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': '',
+                #     'contact_person': contact_person, 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': major,
@@ -2874,6 +3014,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': contact_person, 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_job1001(self, html, link=None, *args, **kwargs):
         """
@@ -2967,17 +3111,17 @@ class BaseCrawl(RequestHeader):
                 pub_date = item.xpath('./div/div/time/@datetime')[0]
                 job_brief, job_level, job_type, company_type, job_property = self.second_request_parser(link, url_name)
 
-                print({
-                    'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                    'edu': '', 'ex': job_level, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': '', 'company_brief': '',
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                #     'edu': '', 'ex': job_level, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': '', 'company_brief': '',
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2989,6 +3133,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_linkin(self, html, link=None, *args, **kwargs):
         """
@@ -3040,16 +3188,16 @@ class BaseCrawl(RequestHeader):
                     link = 'http://www.doumi.com' + link[0]
                 sex, age, job_brief, job_addr, company_type, company_name, edu, ex = self.second_request_parser(link,
                                                                                                                 url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': '', 'end_time': '', 'age': age, 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': '', 'job_link': link, 'number_recruits': number_recruits,
-                    'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': '', 'company_brief': '', 'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': '', 'end_time': '', 'age': age, 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': '', 'job_link': link, 'number_recruits': number_recruits,
+                #     'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': '', 'company_brief': '', 'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3060,6 +3208,10 @@ class BaseCrawl(RequestHeader):
                     'company_status': '', 'phone': '', 'driver_license': '',
                     'company_scale': '', 'company_brief': '', 'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_doumi(self, html, link=None, *args, **kwargs):
         """
@@ -3144,17 +3296,17 @@ class BaseCrawl(RequestHeader):
                     contact_person, ex, job_brief, job_addr, company_type, company_scale, company_brief = self.second_request_parser(
                         link, url_name)
                     link = 'http://www.gongzuochong.com/{c}/{tg}/{id}'.format(c=city_code, tg=job_link_args, id=job_id)
-                    print({
-                        'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                        'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                        'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                        'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                        'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                        'company_name': company_name, 'company_type': company_type,
-                        'company_status': '', 'phone': '', 'driver_license': '',
-                        'company_scale': company_scale, 'company_brief': company_brief,
-                        'contact_person': contact_person, 'company_comment': ''
-                    })
+                    # print({
+                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                    #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                    #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
+                    #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                    #     'company_name': company_name, 'company_type': company_type,
+                    #     'company_status': '', 'phone': '', 'driver_license': '',
+                    #     'company_scale': company_scale, 'company_brief': company_brief,
+                    #     'contact_person': contact_person, 'company_comment': ''
+                    # })
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                         'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3166,6 +3318,10 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': company_brief,
                         'contact_person': contact_person, 'company_comment': ''
                     })
+
+            else:
+                # 如果为空，将标志位置为真
+                self.flag = True
 
     def second_parser_gongzuochong(self, html, link=None, *args, **kwargs):
         """
@@ -3227,17 +3383,17 @@ class BaseCrawl(RequestHeader):
                     link = 'https://hr.ofweek.com' + link[0]
                 company_type, job_addr, job_property, number_recruits, age, job_brief = self.second_request_parser(link,
                                                                                                                    url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': '', 'company_brief': '',
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': '', 'company_brief': '',
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3249,6 +3405,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_ofweek(self, html, link=None, *args, **kwargs):
         """
@@ -3300,17 +3460,17 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./td[1]/a/@href')[0]
                 job_type, job_area, sex, age, lang, job_brief, company_scale, company_type, company_brief, salary = self.second_request_parser(
                     link, url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
-                    'job_tags': '', 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief,
-                    'contact_person': '', 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
+                #     'job_tags': '', 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': company_brief,
+                #     'contact_person': '', 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3322,6 +3482,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_telecomhr(self, html, link=None, *args, **kwargs):
         """
@@ -3400,17 +3564,17 @@ class BaseCrawl(RequestHeader):
                 job_brief, marriage, contact_person, job_tags, age, sex, number_recruits, pub_date, company_brief, job_property = self.second_request_parser(
                     link, url_name)
 
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
-                    'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief,
-                    'contact_person': contact_person, 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
+                #     'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': '', 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': company_brief,
+                #     'contact_person': contact_person, 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3422,6 +3586,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': contact_person, 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_tndbjob(self, html, link=None, *args, **kwargs):
         """
@@ -3567,24 +3735,24 @@ class BaseCrawl(RequestHeader):
                         company_scale += company_property + '/'
                     if temp_company_scale:
                         company_scale += temp_company_scale
-                    id = item.get('loc')
+                    url_id = item.get('loc')
                     quote_city = urllib.parse.quote(city)
                     link = 'https://zhaopin.baidu.com/szzw?id={id}&query={q}&city={c}&is_promise=0&is_direct=1&vip_sign=&asp_ad_job='.format(
-                        id=id, c=quote_city, q=args_urlencode)
+                        id=url_id, c=quote_city, q=args_urlencode)
                     job_addr2, job_brief = self.second_request_parser(link, url_name)
                     if not job_addr:
                         job_addr = job_addr2
-                    print({
-                        'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                        'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                        'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': age, 'sex': sex,
-                        'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                        'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                        'company_name': company_name, 'company_type': company_type,
-                        'company_status': '', 'phone': phone, 'driver_license': '',
-                        'company_scale': company_scale, 'company_brief': company_brief,
-                        'contact_person': '', 'company_comment': ''
-                    })
+                    # print({
+                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                    #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': age, 'sex': sex,
+                    #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                    #     'company_name': company_name, 'company_type': company_type,
+                    #     'company_status': '', 'phone': phone, 'driver_license': '',
+                    #     'company_scale': company_scale, 'company_brief': company_brief,
+                    #     'contact_person': '', 'company_comment': ''
+                    # })
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3596,6 +3764,10 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': company_brief,
                         'contact_person': '', 'company_comment': ''
                     })
+
+            else:
+                # 如果为空，将标志位置为真
+                self.flag = True
 
     def second_parser_baidu(self, html, link=None, *args, **kwargs):
         """
@@ -3666,25 +3838,25 @@ class BaseCrawl(RequestHeader):
                     if area:
                         if city != area:
                             job_area += area
-                    id = item.get('loc')
+                    url_id = item.get('loc')
                     quote_city = urllib.parse.quote(city)
-                    link = 'https://zhaopin.baidu.com/jzzw?id={id}&query={q}&city={c}'.format(id=id, c=quote_city,
+                    link = 'https://zhaopin.baidu.com/jzzw?id={id}&query={q}&city={c}'.format(id=url_id, c=quote_city,
                                                                                               q=args_urlencode)
 
                     job_addr2, job_brief = self.second_request_parser(link, url_name)
                     if not job_addr:
                         job_addr = job_addr2
-                    print({
-                        'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                        'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                        'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': age, 'sex': sex,
-                        'edu': '', 'ex': '', 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                        'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                        'company_name': company_name, 'company_type': '',
-                        'company_status': '', 'phone': '', 'driver_license': '',
-                        'company_scale': '', 'company_brief': company_brief,
-                        'contact_person': '', 'company_comment': ''
-                    })
+                    # print({
+                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
+                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                    #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': age, 'sex': sex,
+                    #     'edu': '', 'ex': '', 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                    #     'company_name': company_name, 'company_type': '',
+                    #     'company_status': '', 'phone': '', 'driver_license': '',
+                    #     'company_scale': '', 'company_brief': company_brief,
+                    #     'contact_person': '', 'company_comment': ''
+                    # })
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3696,6 +3868,10 @@ class BaseCrawl(RequestHeader):
                         'company_scale': '', 'company_brief': company_brief,
                         'contact_person': '', 'company_comment': ''
                     })
+
+            else:
+                # 如果为空，将标志位置为真
+                self.flag = True
 
     def second_parser_baidu_jianzhi(self, html, link=None, *args, **kwargs):
         """
@@ -3737,17 +3913,17 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[2]/div[@class="td-j-name"]/a/@href')[0]
                 pub_date, sex, age, job_addr, job_brief, contact_person, phone, company_scale, company_type = self.second_request_parser(
                     link, url_name)
-                print({
-                    'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
-                    'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                    'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    'company_name': company_name, 'company_type': company_type,
-                    'company_status': '', 'phone': phone, 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': '',
-                    'contact_person': contact_person, 'company_comment': ''
-                })
+                # print({
+                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
+                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
+                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
+                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
+                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                #     'company_name': company_name, 'company_type': company_type,
+                #     'company_status': '', 'phone': phone, 'driver_license': '',
+                #     'company_scale': company_scale, 'company_brief': '',
+                #     'contact_person': contact_person, 'company_comment': ''
+                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3759,6 +3935,10 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': contact_person, 'company_comment': ''
                 })
+
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
 
     def second_parser_jiaoshi(self, html, link=None, *args, **kwargs):
         """
@@ -3815,6 +3995,10 @@ class BaseCrawl(RequestHeader):
             #     'contact_person': '', 'company_comment': ''
             # })
 
+        else:
+            # 如果为空，将标志位置为真
+            self.flag = True
+
     def second_parser_xxx(self, html, link=None, *args, **kwargs):
         """
         网二级网页
@@ -3829,10 +4013,11 @@ class BaseCrawl(RequestHeader):
     def run(self):
         try:
             self.request_site()
-        except BaseException as e:
-            # 如果中途发生错误，把已获取到的数据先保存
+        except KeyboardInterrupt as e:
+            # 如果中断程序，把已获取到的数据先保存
             print(e)
             save_redis(self.jobs)
+            sys.exit()
         return self.jobs
 
 
@@ -3845,7 +4030,6 @@ class GeventCrawl(BaseCrawl):
         :return:
         """
         tasks = []
-        proxy = self.get_proxy()
         for urls in self.request_urls:
             url = urls.get('url')
             url_name = urls.get('type')
@@ -3855,12 +4039,35 @@ class GeventCrawl(BaseCrawl):
             # if not args:
             #     args = self.get_args()
             for args in self.search_args:
+                proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
                 task = gevent.spawn(self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
         gevent.joinall(tasks)
         data = duplicate_removal(self.jobs)
         self.jobs = data
+
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+        """
+        请求格式化好的所有url
+        :param target_urls: 所有目标url
+        :param url_name: url别名
+        :param proxy: 代理
+        :param args_urlencode: url编码后后的搜索关键词
+        :param i: 页码
+        :param index: 搜索关键词
+        :return:
+        """
+        # 遍历请求
+        # print(target_urls)
+        tasks = []
+        try:
+            for target_url in target_urls:
+                task = gevent.spawn(self.request_format_url, target_url, url_name, proxy, args_urlencode, i, index)
+                tasks.append(task)
+            gevent.joinall(tasks)
+        except BaseException as e:
+            print(e)
 
 
 class ThreadPoolCrawl(BaseCrawl):
@@ -3871,7 +4078,7 @@ class ThreadPoolCrawl(BaseCrawl):
         线程池式的请求所有url
         :return:
         """
-        proxy = self.get_proxy()
+
         thread = ThreadPoolExecutor()
         tasks = []
         for urls in self.request_urls:
@@ -3883,12 +4090,37 @@ class ThreadPoolCrawl(BaseCrawl):
             # if not args:
             #     args = self.get_args()
             for args in self.search_args:
+                proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
                 task = thread.submit(self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
         wait(tasks)
         data = duplicate_removal(self.jobs)
         self.jobs = data
+
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+        """
+        请求格式化好的所有url
+        :param target_urls: 所有目标url
+        :param url_name: url别名
+        :param proxy: 代理
+        :param args_urlencode: url编码后后的搜索关键词
+        :param i: 页码
+        :param index: 搜索关键词
+        :return:
+        """
+        thread = ThreadPoolExecutor()
+
+        # 遍历请求
+        # print(target_urls)
+        try:
+            tasks = [thread.submit(self.request_format_url, url, url_name, proxy, args_urlencode, i, index) for url in
+                     target_urls]
+            wait(tasks)
+        except BaseException as e:
+            print(e)
+        # Parallel(n_jobs=10)(delayed(thread.submit)(self.request_format_url, url, url_name, proxy, args_urlencode, i, index) for url in
+        #          target_urls)
 
 
 class ThreadPoolAsynicCrawl(BaseCrawl):
@@ -3901,7 +4133,6 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
         """
         loop = asyncio.get_event_loop()
         thread = ThreadPoolExecutor()
-        proxy = self.get_proxy()
         tasks = []
         for urls in self.request_urls:
             url = urls.get('url')
@@ -3912,6 +4143,7 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
             # if not args:
             #     args = self.get_args()
             for args in self.search_args:
+                proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
                 task = loop.run_in_executor(thread, self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
@@ -3919,6 +4151,20 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
         # 异步操作会有重复的数据,去重
         data = duplicate_removal(self.jobs)
         self.jobs = data
+
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+        """
+        请求格式化好的所有url
+        :param target_urls: 所有目标url
+        :param url_name: url别名
+        :param proxy: 代理
+        :param args_urlencode: url编码后后的搜索关键词
+        :param i: 页码
+        :param index: 搜索关键词
+        :return:
+        """
+        # 异步的loop下不能再开loop，所以直接继承父类的该方法
+        super(ThreadPoolAsynicCrawl, self).request_format_site(target_urls, url_name, proxy, args_urlencode, i, index)
 
 
 def duplicate_removal(lists):
@@ -3962,12 +4208,12 @@ def main(cls=None):
     if not cls:
         cls = GeventCrawl
     # 实例化proxy类，方便后期单例模式调用
-    proxy_obj = ProxyHandler()
-    proxies = duplicate_removal(proxy_obj.get_proxies())
+    # proxy_obj = ProxyHandler()
+    # proxies = duplicate_removal(proxy_obj.get_proxies())
     print('开始爬取.........')
     start = time.time()
     crawl = cls()
-    crawl.proxy_list = proxies  # 测试时防止代理报错影响结果可以先注释掉
+    # crawl.proxy_list = proxies  # 测试时防止代理报错影响结果可以先注释掉
     result = crawl.run()
     save_redis(result)  # 存入redis数据库
     print(result)
@@ -3977,5 +4223,5 @@ def main(cls=None):
 
 if __name__ == '__main__':
     # main()  # 协程方式, 测试时需要查看报错结果可以使用gevent协程的方法
-    main(ThreadPoolCrawl)  # 线程池的方式
-    # main(ThreadPoolAsynicCrawl)  # 线程池+异步的方式
+    # main(ThreadPoolCrawl)  # 线程池的方式
+    main(ThreadPoolAsynicCrawl)  # 线程池+异步的方式
