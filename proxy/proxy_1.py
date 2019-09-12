@@ -20,12 +20,8 @@ import time
 import redis
 import pytesseract
 from PIL import Image
-import js2py
-
 import os
-import sys
-
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+import js2py
 from config import PROXY_URLS, USER_AGENT, TEST_PROXY_URLS, POOL
 
 
@@ -175,37 +171,31 @@ class BaseProxy(object):
         :param response: 第一次请求返回的js数据
         :return: 返回解密好的网页数据
         """
-
         cookie = response.headers["Set-Cookie"]
         js = response.text.encode("utf8").decode("utf8")
-
         js = js.replace("<script>", "").replace("</script>", "").replace("{eval(", "{var data1 = (").replace(chr(0),
                                                                                                              chr(32))
-
         # 使用js2py处理js
         context = js2py.EvalJs()
         context.execute(js)
         js_temp = context.data1
         index1 = js_temp.find("document.")
         index2 = js_temp.find("};if((")
-        print('11', js_temp[index1:index2])
         js_temp = js_temp[index1:index2].replace("document.cookie", "data2")
-        print('22', js_temp)
         try:
             context.execute(js_temp)
         except Exception as e:
             # time.sleep(2)
             # context.execute(js_temp)
             pass
-
         data = context.data2
 
         # 合并cookie，重新请求网站。
         cookie += ";" + data
         response = requests.get("http://www.66ip.cn/mo.php?tqsl=1024", headers={
             "User-Agent": self.user_agent_66ip,
-            "cookie": cookie
-        }, timeout=(3, 7))
+            "cookie": cookie,
+        })
         return response
 
     def compare_proxy(self, proxy, current_ip):
@@ -218,7 +208,7 @@ class BaseProxy(object):
 
         proxy_ip = list(proxy.values())[0].split('//')[1]
         if current_ip in proxy_ip:  # current_ip:x.x.x.x proxy_ip:x.x.x.x:xx
-            # print(proxy)
+            print(proxy)
             return True
         # print('current', current_ip, type(current_ip))
         # print('proxy', proxy_ip, type(proxy_ip))
@@ -572,9 +562,9 @@ class BaseProxy(object):
         url_start = 'https://proxy.mimvp.com/'
         ports = []
         for item in response_port:
-            port_img_url = url_start + item.xpath('./img/@src')[0]
+            port_img = url_start + item.xpath('./img/@src')[0]
             headers = self.header
-            data = requests.get(port_img_url, headers=headers, timeout=(3, 7)).content
+            data = requests.get(port_img, headers=headers).content
             port = self.ocr_get_port(data)
             ports.append(port)
 
@@ -725,7 +715,7 @@ class BaseProxy(object):
         :return:
         """
         headers = self.header
-        response = requests.get(url, headers=headers, timeout=(3, 7)).content
+        response = requests.get(url, headers=headers).content
         try:
             content = response.decode('utf-8')
         except Exception as e:
@@ -797,14 +787,8 @@ class BaseProxy(object):
         对爬取到的数据去重
         :return:
         """
-        # proxy_list = lambda x, y: x if y in x else x + [y]
-        # self.proxy_list = reduce(proxy_list, [[], ] + self.proxy_list)
-        # return self.proxy_list
-        new_proxy_list = []
-        for item in self.proxy_list:
-            if item not in new_proxy_list:
-                new_proxy_list.append(item)
-        self.proxy_list = new_proxy_list
+        proxy_list = lambda x, y: x if y in x else x + [y]
+        self.proxy_list = reduce(proxy_list, [[], ] + self.proxy_list)
         return self.proxy_list
 
     def get_proxy(self, url=None):
@@ -1058,13 +1042,8 @@ def proxy_duplicate_removal(lists):
     对爬取到的数据去重
     :return:
     """
-    # proxy_list = lambda x, y: x if y in x else x + [y]
-    # return reduce(proxy_list, [[], ] + lists)
-    new_proxy_list = []
-    for item in lists:
-        if item not in new_proxy_list:
-            new_proxy_list.append(item)
-    return new_proxy_list
+    proxy_list = lambda x, y: x if y in x else x + [y]
+    return reduce(proxy_list, [[], ] + lists)
 
 
 def save_redis(proxy_list, key=None):
@@ -1083,8 +1062,6 @@ def save_redis(proxy_list, key=None):
     if cont:
         cont = eval(cont)
         proxy_list.extend(cont)
-    proxy_list = proxy_duplicate_removal(proxy_list)
-    print('数据库内还有 %s 个代理可用' % len(proxy_list))
     conn.set(key, str(proxy_list))
 
 
@@ -1100,10 +1077,9 @@ def get_redis(key=None):
     proxies = conn.get(key)
     if proxies:
         proxies = eval(proxies)
-        # proxies = db_test_proxy(proxies)  # 在正式的爬取阶段节省时间，可以把此测试代理步骤注释掉
-        return proxies
-    else:
-        print('数据库内无可用代理，请重新爬取')
+    proxy_list = db_test_proxy(proxies)
+    print('数据库内还有 %s 个代理可用' % len(proxy_list))
+    return proxy_list
 
 
 def thread_exector(thread, res):
@@ -1114,8 +1090,9 @@ def thread_exector(thread, res):
     :return:
     """
     tasks = [thread.submit(res.get_test_proxy, proxy) for proxy in res.proxy_list]
-    # wait(tasks, return_when=FIRST_COMPLETED)
     thread.shutdown()
+    wait(tasks, return_when=FIRST_COMPLETED)
+    # thread2.shutdown()
     result = [obj for obj in as_completed(tasks)]
     return result
 
@@ -1155,15 +1132,12 @@ def db_test_proxy(proxies):
     for item in tasks:
         temp_res = item.result()
         if temp_res:
-            if temp_res not in proxy_list:
-                proxy_list.extend(temp_res)
+            proxy_list.extend(temp_res)
 
-    new_proxy_list = []
-    for item in proxy_list:
-        if item not in new_proxy_list:
-            new_proxy_list.append(item)
-    save_redis(new_proxy_list)
-    return new_proxy_list
+    proxy_list = proxy_duplicate_removal(proxy_list)
+    print('一共有%s个可用的代理' % len(proxy_list))
+    save_redis(proxy_list)
+    return proxy_list
 
 
 def main_gevent():
@@ -1172,11 +1146,10 @@ def main_gevent():
     # 爬取部分
     res = NormalProxy()
     proxy_list = res.proxies
-    print('爬取完毕，一共爬取 %s 个代理' % len(proxy_list))
     # print(proxy_list, len(res.proxies))
 
     # 测试代理部分
-    print('开始测试代理IP可用性，整个过程大概需要几分钟，请耐心等待.........')
+    print('开始测试代理IP可用性.........')
     available_proxy_list = res.proxy
     save_redis(available_proxy_list)
     return available_proxy_list
@@ -1195,14 +1168,13 @@ def main_thread_pool():
     for item in temp_data:
         data.extend(item)
     proxy_list = proxy_duplicate_removal(data)
-    print('爬取完毕，一共爬取 %s 个代理' % len(proxy_list))
 
     # 测试代理部分
-    print('开始测试代理IP可用性，整个过程大概需要几分钟，请耐心等待.........')
+    print('开始测试代理IP可用性.........')
     res.proxy_list = proxy_list
     thread2 = ThreadPoolExecutor()
     tasks2 = [thread2.submit(res.get_test_proxy, proxy) for proxy in res.proxy_list]
-    wait(tasks2)
+    wait(tasks2, return_when=FIRST_COMPLETED)
     # thread2.shutdown()
     temp_data2 = [obj for obj in as_completed(tasks2)]
     data2 = []
@@ -1213,7 +1185,7 @@ def main_thread_pool():
     data2 = proxy_duplicate_removal(data2)
 
     # 存储到redis
-    print('开始测试代理IP可用性，整个过程大概需要几分钟，请耐心等待.........')
+    print('一共爬取了%s个可用的代理' % len(proxy_list))
     save_redis(data2)
     return data2
 
@@ -1246,9 +1218,9 @@ def main_thread_pool_asynicio():
         proxy_list.extend(obj.result())
     # 异步操作会有重复的数据,去重
     proxy_list = proxy_duplicate_removal(proxy_list)
-    print('爬取完毕，一共爬取 %s 个代理' % len(proxy_list))
+
     # 测试代理部分
-    print('开始测试代理IP可用性，整个过程大概需要几分钟，请耐心等待.........')
+    print('开始测试代理IP可用性.........')
     res.proxy_list = proxy_list
     loop2 = asyncio.get_event_loop()
     thread2 = ThreadPoolExecutor()
@@ -1277,11 +1249,11 @@ if __name__ == '__main__':
     # main_gevent()
 
     # 第二种，使用线程池，速度最快
-    res = main_thread_pool()
+    # res = main_thread_pool()
 
     # 第三种，使用线程池+异步io，综合性更强，推荐该方法
-    # res2 = main_thread_pool_asynicio()
-    # print('总用时:', time.time() - start)
+    res2 = main_thread_pool_asynicio()
+    print('总用时:', time.time() - start)
 
     """数据库有值和数据库无值时不能混合使用，容易导致数据紊乱，且当数据库无值存储时已做过代理验证"""
     # ############### 数据库有值时 ###############
