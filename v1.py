@@ -5,6 +5,7 @@
 
 import gevent
 from gevent import monkey
+from gevent.pool import Pool
 
 monkey.patch_all()
 import requests
@@ -31,8 +32,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from proxy.proxy import get_redis as get_proxy_redis
-from config import USER_AGENT, REQEUST_URLS, ZHUOPIN_CLIENT_ID, LAGOU_SHOW, POOL, POOL2
-from config import POOL3, BOSS_COOKIE, SEARCH_ARGS, INTERVAL
+from config import USER_AGENT, REQEUST_URLS, ZHUOPIN_CLIENT_ID, LAGOU_SHOW, POOL, POOL2, POOL4
+from config import POOL3, BOSS_COOKIE, SEARCH_ARGS, INTERVAL, END_PAGE, GEVENT_POOL, THREAD_POOL
 from logger import logger
 
 requests.packages.urllib3.disable_warnings()
@@ -119,6 +120,7 @@ class BaseCrawl(RequestHeader):
         self.request_urls = self.get_request_urls
         self.proxy_list = None
         self.target_urls = None
+        self.invalid_urls = set()
         self.jobs = []
         self.search_args = SEARCH_ARGS
 
@@ -245,75 +247,76 @@ class BaseCrawl(RequestHeader):
         获取58网的城市代码
         :return:
         """
-        codes = ['hf', 'wuhu', 'bengbu', 'fy', 'hn', 'anqing', 'suzhou', 'la', 'huaibei', 'chuzhou', 'mas', 'tongling',
-                 'xuancheng', 'bozhou', 'huangshan', 'chizhou', 'ch', 'hexian', 'hq', 'tongcheng', 'ningguo',
-                 'tianchang', 'dongzhi', 'wuweixian', 'fz', 'xm', 'qz', 'pt', 'zhangzhou', 'nd', 'sm', 'np', 'ly',
-                 'wuyishan', 'shishi', 'jinjiangshi', 'nananshi', 'longhai', 'shanghangxian', 'fuanshi', 'fudingshi',
-                 'anxixian', 'yongchunxian', 'yongan', 'zhangpu', 'sz', 'gz', 'dg', 'fs', 'zs', 'zh', 'huizhou', 'jm',
-                 'st', 'zhanjiang', 'zq', 'mm', 'jy', 'mz', 'qingyuan', 'yj', 'sg', 'heyuan', 'yf', 'sw', 'chaozhou',
-                 'taishan', 'yangchun', 'sd', 'huidong', 'boluo', 'haifengxian', 'kaipingshi', 'lufengshi', 'nn',
-                 'liuzhou', 'gl', 'yulin', 'wuzhou', 'bh', 'gg', 'qinzhou', 'baise', 'hc', 'lb', 'hezhou', 'fcg',
-                 'chongzuo', 'guipingqu', 'beiliushi', 'bobaixian', 'cenxi', 'gy', 'zunyi', 'qdn', 'qn', 'lps', 'bijie',
-                 'tr', 'anshun', 'qxn', 'renhuaishi', 'qingzhen', 'lz', 'tianshui', 'by', 'qingyang', 'pl', 'jq',
-                 'zhangye', 'wuwei', 'dx', 'jinchang', 'ln', 'linxia', 'jyg', 'gn', 'dunhuang', 'haikou', 'sanya',
-                 'wzs', 'sansha', 'qh', 'wenchang', 'wanning', 'tunchang', 'qiongzhong', 'lingshui', 'df', 'da', 'cm',
-                 'baoting', 'baish', 'danzhou', 'zz', 'luoyang', 'xx', 'ny', 'xc', 'pds', 'ay', 'jiaozuo', 'sq',
-                 'kaifeng', 'puyang', 'zk', 'xy', 'zmd', 'luohe', 'smx', 'hb', 'jiyuan', 'mg', 'yanling', 'yuzhou',
-                 'changge', 'lingbaoshi', 'qixianqu', 'ruzhou', 'xiangchengshi', 'yanshiqu', 'changyuan', 'huaxian',
-                 'linzhou', 'qinyang', 'mengzhou', 'wenxian', 'weishixian', 'lankaoxian', 'tongxuxian', 'lyxinan',
-                 'yichuan', 'mengjinqu', 'lyyiyang', 'wugang', 'yongcheng', 'suixian', 'luyi', 'yingchixian', 'shenqiu',
-                 'taikang', 'shangshui', 'qixianq', 'junxian', 'fanxian', 'gushixian', 'huaibinxian', 'dengzhou',
-                 'xinye', 'hrb', 'dq', 'qqhr', 'mdj', 'suihua', 'jms', 'jixi', 'sys', 'hegang', 'heihe', 'yich', 'qth',
-                 'dxal', 'shanda', 'shzhaodong', 'zhaozhou', 'wh', 'yc', 'xf', 'jingzhou', 'shiyan', 'hshi', 'xiaogan',
-                 'hg', 'es', 'jingmen', 'xianning', 'ez', 'suizhou', 'qianjiang', 'tm', 'xiantao', 'snj', 'yidou',
-                 'hanchuan', 'zaoyang', 'wuxueshi', 'zhongxiangshi', 'jingshanxian', 'shayangxian', 'songzi',
-                 'guangshuishi', 'chibishi', 'laohekou', 'gucheng', 'yichengshi', 'nanzhang', 'yunmeng', 'anlu', 'dawu',
-                 'xiaochang', 'dangyang', 'zhijiang', 'jiayuxian', 'suixia', 'cs', 'zhuzhou', 'yiyang', 'changde', 'hy',
-                 'xiangtan', 'yy', 'chenzhou', 'shaoyang', 'hh', 'yongzhou', 'ld', 'xiangxi', 'zjj', 'liling', 'lixian',
-                 'czguiyang', 'zixing', 'yongxing', 'changningshi', 'qidongxian', 'hengdong', 'lengshuijiangshi',
-                 'lianyuanshi', 'shuangfengxian', 'shaoyangxian', 'shaodongxian', 'yuanjiangs', 'nanxian', 'qiyang',
-                 'xiangyin', 'huarong', 'cilixian', 'zzyouxian', 'sjz', 'bd', 'ts', 'lf', 'hd', 'qhd', 'cangzhou', 'xt',
-                 'hs', 'zjk', 'chengde', 'dingzhou', 'gt', 'zhangbei', 'zx', 'zd', 'qianan', 'renqiu', 'sanhe', 'wuan',
-                 'xionganxinqu', 'lfyanjiao', 'zhuozhou', 'hejian', 'huanghua', 'cangxian', 'cixian', 'shexian',
-                 'bazhou', 'xianghe', 'lfguan', 'zunhua', 'qianxixian', 'yutianxian', 'luannanxian', 'shaheshi', 'su',
-                 'nj', 'wx', 'cz', 'xz', 'nt', 'yz', 'yancheng', 'ha', 'lyg', 'taizhou', 'suqian', 'zj', 'shuyang',
-                 'dafeng', 'rugao', 'qidong', 'liyang', 'haimen', 'donghai', 'yangzhong', 'xinghuashi', 'xinyishi',
-                 'taixing', 'rudong', 'pizhou', 'xzpeixian', 'jingjiang', 'jianhu', 'haian', 'dongtai', 'danyang',
-                 'baoyingx', 'guannan', 'guanyun', 'jiangyan', 'jintan', 'szkunshan', 'sihong', 'siyang', 'jurong',
-                 'sheyang', 'funingxian', 'xiangshui', 'xuyi', 'jinhu', 'nc', 'ganzhou', 'jj', 'yichun', 'ja', 'sr',
-                 'px', 'fuzhou', 'jdz', 'xinyu', 'yingtan', 'yxx', 'lepingshi', 'jinxian', 'fenyi', 'fengchengshi',
-                 'zhangshu', 'gaoan', 'yujiang', 'nanchengx', 'fuliangxian', 'cc', 'jl', 'sp', 'yanbian', 'songyuan',
-                 'bc', 'th', 'baishan', 'liaoyuan', 'gongzhuling', 'meihekou', 'fuyuxian', 'changlingxian', 'huadian',
-                 'panshi', 'lishu', 'sy', 'dl', 'as', 'jinzhou', 'fushun', 'yk', 'pj', 'cy', 'dandong', 'liaoyang',
-                 'benxi', 'hld', 'tl', 'fx', 'pld', 'wfd', 'dengta', 'fengcheng', 'beipiao', 'kaiyuan', 'yinchuan',
-                 'wuzhong', 'szs', 'zw', 'guyuan', 'hu', 'bt', 'chifeng', 'erds', 'tongliao', 'hlbe', 'bycem', 'wlcb',
-                 'xl', 'xam', 'wuhai', 'alsm', 'hlr', 'xn', 'hx', 'haibei', 'guoluo', 'haidong', 'huangnan', 'ys',
-                 'hainan', 'geermushi', 'qd', 'jn', 'yt', 'wf', 'linyi', 'zb', 'jining', 'ta', 'lc', 'weihai',
-                 'zaozhuang', 'dz', 'rizhao', 'dy', 'heze', 'bz', 'lw', 'zhangqiu', 'kl', 'zc', 'shouguang', 'longkou',
-                 'caoxian', 'shanxian', 'feicheng', 'gaomi', 'guangrao', 'huantaixian', 'juxian', 'laizhou', 'penglai',
-                 'qingzhou', 'rongcheng', 'rushan', 'tengzhou', 'xintai', 'zhaoyuan', 'zoucheng', 'zouping', 'linqing',
-                 'chiping', 'hzyc', 'boxing', 'dongming', 'juye', 'wudi', 'qihe', 'weishan', 'yuchengshi', 'linyixianq',
-                 'leling', 'laiyang', 'ningjin', 'gaotang', 'shenxian', 'yanggu', 'guanxian', 'pingyi', 'tancheng',
-                 'yiyuanxian', 'wenshang', 'liangshanx', 'lijin', 'yinanxian', 'qixia', 'ningyang', 'dongping',
-                 'changyishi', 'anqiu', 'changle', 'linqu', 'juancheng', 'ty', 'linfen', 'dt', 'yuncheng', 'jz',
-                 'changzhi', 'jincheng', 'yq', 'lvliang', 'xinzhou', 'shuozhou', 'linyixian', 'qingxu', 'liulin',
-                 'gaoping', 'zezhou', 'xiangyuanxian', 'xiaoyi', 'xa', 'xianyang', 'baoji', 'wn', 'hanzhong', 'yl',
-                 'yanan', 'ankang', 'sl', 'tc', 'shenmu', 'hancheng', 'fugu', 'jingbian', 'dingbian', 'cd', 'mianyang',
-                 'deyang', 'nanchong', 'yb', 'zg', 'ls', 'luzhou', 'dazhou', 'scnj', 'suining', 'panzhihua', 'ms', 'ga',
-                 'zy', 'liangshan', 'guangyuan', 'ya', 'bazhong', 'ab', 'ganzi', 'anyuexian', 'guanghanshi',
-                 'jianyangshi', 'renshouxian', 'shehongxian', 'dazu', 'xuanhan', 'qux', 'changningx', 'xj', 'changji',
-                 'bygl', 'yili', 'aks', 'ks', 'hami', 'klmy', 'betl', 'tlf', 'ht', 'shz', 'kzls', 'ale', 'wjq', 'tmsk',
-                 'kel', 'alt', 'tac', 'lasa', 'rkz', 'sn', 'linzhi', 'changdu', 'nq', 'al', 'rituxian', 'gaizexian',
-                 'km', 'qj', 'dali', 'honghe', 'yx', 'lj', 'ws', 'cx', 'bn', 'zt', 'dh', 'pe', 'bs', 'lincang',
-                 'diqing', 'nujiang', 'milexian', 'anningshi', 'xuanwushi', 'hz', 'nb', 'wz', 'jh', 'jx', 'tz', 'sx',
-                 'huzhou', 'lishui', 'quzhou', 'zhoushan', 'yueqingcity', 'ruiancity', 'yiwu', 'yuyao', 'zhuji',
-                 'xiangshanxian', 'wenling', 'tongxiang', 'cixi', 'changxing', 'jiashanx', 'haining', 'deqing',
-                 'dongyang', 'anji', 'cangnanxian', 'linhai', 'yongkang', 'yuhuan', 'pinghushi', 'haiyan', 'wuyix',
-                 'shengzhou', 'xinchang', 'jiangshanshi', 'pingyangxian', 'hk', 'am', 'tw', 'quanguo', 'cn',
-                 'gllosangeles', 'glsanfrancisco', 'glnewyork', 'gltoronto', 'glvancouver', 'glgreaterlondon',
-                 'glmoscow', 'glseoul', 'gltokyo', 'glsingapore', 'glbangkok', 'glchiangmai', 'gldubai', 'glauckland',
-                 'glsydney', 'glmelbourne', 'city']
-        return codes
+        # codes = ['hf', 'wuhu', 'bengbu', 'fy', 'hn', 'anqing', 'suzhou', 'la', 'huaibei', 'chuzhou', 'mas', 'tongling',
+        #          'xuancheng', 'bozhou', 'huangshan', 'chizhou', 'ch', 'hexian', 'hq', 'tongcheng', 'ningguo',
+        #          'tianchang', 'dongzhi', 'wuweixian', 'fz', 'xm', 'qz', 'pt', 'zhangzhou', 'nd', 'sm', 'np', 'ly',
+        #          'wuyishan', 'shishi', 'jinjiangshi', 'nananshi', 'longhai', 'shanghangxian', 'fuanshi', 'fudingshi',
+        #          'anxixian', 'yongchunxian', 'yongan', 'zhangpu', 'sz', 'gz', 'dg', 'fs', 'zs', 'zh', 'huizhou', 'jm',
+        #          'st', 'zhanjiang', 'zq', 'mm', 'jy', 'mz', 'qingyuan', 'yj', 'sg', 'heyuan', 'yf', 'sw', 'chaozhou',
+        #          'taishan', 'yangchun', 'sd', 'huidong', 'boluo', 'haifengxian', 'kaipingshi', 'lufengshi', 'nn',
+        #          'liuzhou', 'gl', 'yulin', 'wuzhou', 'bh', 'gg', 'qinzhou', 'baise', 'hc', 'lb', 'hezhou', 'fcg',
+        #          'chongzuo', 'guipingqu', 'beiliushi', 'bobaixian', 'cenxi', 'gy', 'zunyi', 'qdn', 'qn', 'lps', 'bijie',
+        #          'tr', 'anshun', 'qxn', 'renhuaishi', 'qingzhen', 'lz', 'tianshui', 'by', 'qingyang', 'pl', 'jq',
+        #          'zhangye', 'wuwei', 'dx', 'jinchang', 'ln', 'linxia', 'jyg', 'gn', 'dunhuang', 'haikou', 'sanya',
+        #          'wzs', 'sansha', 'qh', 'wenchang', 'wanning', 'tunchang', 'qiongzhong', 'lingshui', 'df', 'da', 'cm',
+        #          'baoting', 'baish', 'danzhou', 'zz', 'luoyang', 'xx', 'ny', 'xc', 'pds', 'ay', 'jiaozuo', 'sq',
+        #          'kaifeng', 'puyang', 'zk', 'xy', 'zmd', 'luohe', 'smx', 'hb', 'jiyuan', 'mg', 'yanling', 'yuzhou',
+        #          'changge', 'lingbaoshi', 'qixianqu', 'ruzhou', 'xiangchengshi', 'yanshiqu', 'changyuan', 'huaxian',
+        #          'linzhou', 'qinyang', 'mengzhou', 'wenxian', 'weishixian', 'lankaoxian', 'tongxuxian', 'lyxinan',
+        #          'yichuan', 'mengjinqu', 'lyyiyang', 'wugang', 'yongcheng', 'suixian', 'luyi', 'yingchixian', 'shenqiu',
+        #          'taikang', 'shangshui', 'qixianq', 'junxian', 'fanxian', 'gushixian', 'huaibinxian', 'dengzhou',
+        #          'xinye', 'hrb', 'dq', 'qqhr', 'mdj', 'suihua', 'jms', 'jixi', 'sys', 'hegang', 'heihe', 'yich', 'qth',
+        #          'dxal', 'shanda', 'shzhaodong', 'zhaozhou', 'wh', 'yc', 'xf', 'jingzhou', 'shiyan', 'hshi', 'xiaogan',
+        #          'hg', 'es', 'jingmen', 'xianning', 'ez', 'suizhou', 'qianjiang', 'tm', 'xiantao', 'snj', 'yidou',
+        #          'hanchuan', 'zaoyang', 'wuxueshi', 'zhongxiangshi', 'jingshanxian', 'shayangxian', 'songzi',
+        #          'guangshuishi', 'chibishi', 'laohekou', 'gucheng', 'yichengshi', 'nanzhang', 'yunmeng', 'anlu', 'dawu',
+        #          'xiaochang', 'dangyang', 'zhijiang', 'jiayuxian', 'suixia', 'cs', 'zhuzhou', 'yiyang', 'changde', 'hy',
+        #          'xiangtan', 'yy', 'chenzhou', 'shaoyang', 'hh', 'yongzhou', 'ld', 'xiangxi', 'zjj', 'liling', 'lixian',
+        #          'czguiyang', 'zixing', 'yongxing', 'changningshi', 'qidongxian', 'hengdong', 'lengshuijiangshi',
+        #          'lianyuanshi', 'shuangfengxian', 'shaoyangxian', 'shaodongxian', 'yuanjiangs', 'nanxian', 'qiyang',
+        #          'xiangyin', 'huarong', 'cilixian', 'zzyouxian', 'sjz', 'bd', 'ts', 'lf', 'hd', 'qhd', 'cangzhou', 'xt',
+        #          'hs', 'zjk', 'chengde', 'dingzhou', 'gt', 'zhangbei', 'zx', 'zd', 'qianan', 'renqiu', 'sanhe', 'wuan',
+        #          'xionganxinqu', 'lfyanjiao', 'zhuozhou', 'hejian', 'huanghua', 'cangxian', 'cixian', 'shexian',
+        #          'bazhou', 'xianghe', 'lfguan', 'zunhua', 'qianxixian', 'yutianxian', 'luannanxian', 'shaheshi', 'su',
+        #          'nj', 'wx', 'cz', 'xz', 'nt', 'yz', 'yancheng', 'ha', 'lyg', 'taizhou', 'suqian', 'zj', 'shuyang',
+        #          'dafeng', 'rugao', 'qidong', 'liyang', 'haimen', 'donghai', 'yangzhong', 'xinghuashi', 'xinyishi',
+        #          'taixing', 'rudong', 'pizhou', 'xzpeixian', 'jingjiang', 'jianhu', 'haian', 'dongtai', 'danyang',
+        #          'baoyingx', 'guannan', 'guanyun', 'jiangyan', 'jintan', 'szkunshan', 'sihong', 'siyang', 'jurong',
+        #          'sheyang', 'funingxian', 'xiangshui', 'xuyi', 'jinhu', 'nc', 'ganzhou', 'jj', 'yichun', 'ja', 'sr',
+        #          'px', 'fuzhou', 'jdz', 'xinyu', 'yingtan', 'yxx', 'lepingshi', 'jinxian', 'fenyi', 'fengchengshi',
+        #          'zhangshu', 'gaoan', 'yujiang', 'nanchengx', 'fuliangxian', 'cc', 'jl', 'sp', 'yanbian', 'songyuan',
+        #          'bc', 'th', 'baishan', 'liaoyuan', 'gongzhuling', 'meihekou', 'fuyuxian', 'changlingxian', 'huadian',
+        #          'panshi', 'lishu', 'sy', 'dl', 'as', 'jinzhou', 'fushun', 'yk', 'pj', 'cy', 'dandong', 'liaoyang',
+        #          'benxi', 'hld', 'tl', 'fx', 'pld', 'wfd', 'dengta', 'fengcheng', 'beipiao', 'kaiyuan', 'yinchuan',
+        #          'wuzhong', 'szs', 'zw', 'guyuan', 'hu', 'bt', 'chifeng', 'erds', 'tongliao', 'hlbe', 'bycem', 'wlcb',
+        #          'xl', 'xam', 'wuhai', 'alsm', 'hlr', 'xn', 'hx', 'haibei', 'guoluo', 'haidong', 'huangnan', 'ys',
+        #          'hainan', 'geermushi', 'qd', 'jn', 'yt', 'wf', 'linyi', 'zb', 'jining', 'ta', 'lc', 'weihai',
+        #          'zaozhuang', 'dz', 'rizhao', 'dy', 'heze', 'bz', 'lw', 'zhangqiu', 'kl', 'zc', 'shouguang', 'longkou',
+        #          'caoxian', 'shanxian', 'feicheng', 'gaomi', 'guangrao', 'huantaixian', 'juxian', 'laizhou', 'penglai',
+        #          'qingzhou', 'rongcheng', 'rushan', 'tengzhou', 'xintai', 'zhaoyuan', 'zoucheng', 'zouping', 'linqing',
+        #          'chiping', 'hzyc', 'boxing', 'dongming', 'juye', 'wudi', 'qihe', 'weishan', 'yuchengshi', 'linyixianq',
+        #          'leling', 'laiyang', 'ningjin', 'gaotang', 'shenxian', 'yanggu', 'guanxian', 'pingyi', 'tancheng',
+        #          'yiyuanxian', 'wenshang', 'liangshanx', 'lijin', 'yinanxian', 'qixia', 'ningyang', 'dongping',
+        #          'changyishi', 'anqiu', 'changle', 'linqu', 'juancheng', 'ty', 'linfen', 'dt', 'yuncheng', 'jz',
+        #          'changzhi', 'jincheng', 'yq', 'lvliang', 'xinzhou', 'shuozhou', 'linyixian', 'qingxu', 'liulin',
+        #          'gaoping', 'zezhou', 'xiangyuanxian', 'xiaoyi', 'xa', 'xianyang', 'baoji', 'wn', 'hanzhong', 'yl',
+        #          'yanan', 'ankang', 'sl', 'tc', 'shenmu', 'hancheng', 'fugu', 'jingbian', 'dingbian', 'cd', 'mianyang',
+        #          'deyang', 'nanchong', 'yb', 'zg', 'ls', 'luzhou', 'dazhou', 'scnj', 'suining', 'panzhihua', 'ms', 'ga',
+        #          'zy', 'liangshan', 'guangyuan', 'ya', 'bazhong', 'ab', 'ganzi', 'anyuexian', 'guanghanshi',
+        #          'jianyangshi', 'renshouxian', 'shehongxian', 'dazu', 'xuanhan', 'qux', 'changningx', 'xj', 'changji',
+        #          'bygl', 'yili', 'aks', 'ks', 'hami', 'klmy', 'betl', 'tlf', 'ht', 'shz', 'kzls', 'ale', 'wjq', 'tmsk',
+        #          'kel', 'alt', 'tac', 'lasa', 'rkz', 'sn', 'linzhi', 'changdu', 'nq', 'al', 'rituxian', 'gaizexian',
+        #          'km', 'qj', 'dali', 'honghe', 'yx', 'lj', 'ws', 'cx', 'bn', 'zt', 'dh', 'pe', 'bs', 'lincang',
+        #          'diqing', 'nujiang', 'milexian', 'anningshi', 'xuanwushi', 'hz', 'nb', 'wz', 'jh', 'jx', 'tz', 'sx',
+        #          'huzhou', 'lishui', 'quzhou', 'zhoushan', 'yueqingcity', 'ruiancity', 'yiwu', 'yuyao', 'zhuji',
+        #          'xiangshanxian', 'wenling', 'tongxiang', 'cixi', 'changxing', 'jiashanx', 'haining', 'deqing',
+        #          'dongyang', 'anji', 'cangnanxian', 'linhai', 'yongkang', 'yuhuan', 'pinghushi', 'haiyan', 'wuyix',
+        #          'shengzhou', 'xinchang', 'jiangshanshi', 'pingyangxian', 'hk', 'am', 'tw', 'quanguo', 'cn',
+        #          'gllosangeles', 'glsanfrancisco', 'glnewyork', 'gltoronto', 'glvancouver', 'glgreaterlondon',
+        #          'glmoscow', 'glseoul', 'gltokyo', 'glsingapore', 'glbangkok', 'glchiangmai', 'gldubai', 'glauckland',
+        #          'glsydney', 'glmelbourne', 'city']
+        # return codes
+        return ['changningx', 'gaizexian']
 
     def get_chinahr_city_code(self):
         """
@@ -613,22 +616,28 @@ class BaseCrawl(RequestHeader):
         :param args: 未编码的搜索职位名参数
         :return:
         """
-        CRAWL_LOG.info('to request target urls')
 
-        # 索引字段
-        index = args
-        if not args_urlencode:
-            args_urlencode = urllib.parse.quote('python')
-
-        # 获取城市代码
-        city_codes = self.get_city_codes(url_name)
-
-        # 如果有城市代码
-        if city_codes:
-            for city_code in city_codes:
-                self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index, city_code)
+        market_urls = get_url_redis('market_urls')  # 已爬取的url
+        db_target_urls = get_url_redis()  # 所有的url
+        if market_urls and db_target_urls and market_urls == db_target_urls:
+            print('全部url已请求爬取完毕')
+            CRAWL_LOG.info('all target urls request finished')
         else:
-            self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index)
+            CRAWL_LOG.info('to request target urls')
+            # 索引字段
+            index = args
+            if not args_urlencode:
+                args_urlencode = urllib.parse.quote('python')
+
+            # 获取城市代码
+            city_codes = self.get_city_codes(url_name)
+
+            # 如果有城市代码
+            if city_codes:
+                for city_code in city_codes:
+                    self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index, city_code)
+            else:
+                self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index)
 
     def enumerate_request_urls(self, url, url_name, args, args_urlencode, proxy, index, city_code=None):
         """
@@ -645,169 +654,234 @@ class BaseCrawl(RequestHeader):
 
         # 如果数据库内无值，生成值并存入数据库(第一次运行程序)
         if not self.target_urls:
-            target_urls = self.generate_target_urls(url, url_name, city_code, args, args_urlencode, index)
 
-            # 保存所有的目标url，这里如果是协程或者多线程，可能会导致页码和真实情况有偏移，正常现象
-            save_url_redis(target_urls)
+            # 生成所有的目标url
+            target_urls = self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args, args_urlencode,
+                                                            index, is_generate=True)
 
-            # 开始请求
-            # for i in range(1, 2):  # 作测试使用
-            for i in range(1, 100):  # 页码总数随意，但一般情况下每个网站搜出来的职位最多就100页左右
-                try:
-                    self.request_format_site(target_urls, url_name, proxy, args_urlencode, i, index)
-                    save_market_page_redis(i)  # 保存已爬取的页码
+            # 保存所有的目标url，这里如果是协程或者多线程，可能会导致页码和真实情况有少量偏移，正常现象
+            if target_urls:
+                self.target_urls = target_urls
+                save_url_redis(target_urls)
 
-                except BaseException as e:
-                    print(e)
-                    CRAWL_LOG.error('request exception occurred:%s' % e)
-                    save_redis(self.jobs)
+            # 开始遍历请求
+            self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args, args_urlencode,
+                                              index)
 
-        # 如果数据库有值(第二次运行程序)
+        # 如果数据库有值(第二次及之后的运行程序)
         else:
+            # 生成所有的目标url
+            db_target_urls = get_url_redis()
+            page = get_market_page_redis()  # 已爬取的页码
+            generate_target_urls = self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args,
+                                                                     args_urlencode, index, is_generate=True)
+            # 如果上一次爬取时没有生成完成所有的url
+            if db_target_urls != generate_target_urls:
+                db_target_urls = generate_target_urls
 
-            market_urls = get_url_redis('market_urls')
-            if market_urls == self.target_urls:
-                print('所有url都已爬取完毕....')
+            market_urls = get_url_redis('market_urls')  # 已爬取的url
+            if market_urls == db_target_urls:
+                print('全部url已爬取完毕')
             else:
-                # 求得未爬取的url
-                target_urls = self.target_urls - market_urls
-                page = get_market_page_redis()
-                # for i in range(page, 2):
-                for j in range(page, 100):
-                    if self.flag:
-                        # 为其他网站的url设置初始值
-                        self.flag = False
-                        print('网站 %s 已无 %s 相关数据，已切换到其他网站继续爬取.....' % (url_name, index))
-                        break
-                    # 请求
-                    try:
-                        self.request_format_site(target_urls, url_name, proxy, args_urlencode, j, index)
-                        save_market_page_redis(j)  # 保存已爬取的页码
-                    except BaseException as e:
-                        print(e)
-                        CRAWL_LOG.error('request exception occurred:%s' % e)
-                        save_redis(self.jobs)
+                if market_urls:
+                    target_urls = db_target_urls - market_urls  # 未爬取的url
+                else:
+                    target_urls = db_target_urls
+                self.target_urls = target_urls
+                save_url_redis(target_urls)  # 重新保存所有的目标url
 
-    def generate_target_urls(self, url, url_name, city_code, args, args_urlencode, index):
+                # 开始遍历请求
+                self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args, args_urlencode, index,
+                                                  page=page)
+
+    def generate_reqeust_invalid_urls(self, url, city_code, url_name, args, args_urlencode, page=None):
         """
-        生成所有的url
+        生成无效的url
+        :param url: url
+        :param city_code: 城市代码
+        :param url_name: url别名
+        :param args: 搜索关键词
+        :param args_urlencode: 已url编码的搜索关键词
+        :param page: 页码
+        :return:
+        """
+
+        invalid_target_urls = set()
+        if not page:
+            page = 1
+
+        for i in range(page, END_PAGE):
+            end_url = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, set())
+            invalid_target_urls.update(end_url)
+
+        # print('invalid_target_urls', invalid_target_urls)
+        print('删除无效的url')
+        return invalid_target_urls
+
+    def generate_reqeust_target_urls(self, url, url_name, proxy, city_code, args, args_urlencode, index,
+                                     is_generate=False, page=None):
+        """
+        生成所有的url和遍历请求
         :param url: 待爬取的url
         :param url_name: url的别名
+        :param proxy: 代理
         :param city_code: 城市代码
         :param args: 关键词
         :param args_urlencode: 已url编码好的关键词
         :param index: 索引
+        :param is_generate: 是否是生成所有的目标url
+        :param page: 页码
         :return: 返回所有的待爬取的目标url
         """
 
         # 最后的目标url
-        target_urls = set()
+        if is_generate:
+            target_urls = set()
+        else:
+            target_urls = self.target_urls
+        if not page:
+            page = 1
         # for i in range(1, 2):  # 作测试使用
-        for i in range(1, 100):  # 页码总数随意，但一般情况下每个网站搜出来的职位最多就100页左右
+        for i in range(page, END_PAGE):  # 页码总数随意，但一般情况下每个网站搜出来的职位最多就100页左右
             # 当标志位为真，即标志该站某一页已经没有数据，该网站停止爬取，终止循环
             if self.flag:
                 # 为其他网站的url设置初始值
                 self.flag = False
                 print('网站 %s 已无 %s 相关数据，已切换到其他网站继续爬取.....' % (url_name, index))
+
+                # 删除对应的无效url
+                invalid_url = self.generate_reqeust_invalid_urls(url, city_code, url_name, args, args_urlencode, page)
+                if invalid_url:
+                    self.invalid_urls.update(invalid_url)
+                    self.target_urls -= self.invalid_urls
+                    target_urls = self.target_urls
+                    save_url_redis(self.target_urls)
                 break
 
-            if 'zhilian' in url_name:
-                i *= 90
-                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+            temp_urls = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, target_urls)
+            target_urls.update(temp_urls)
+
+            # 请求
+            if not is_generate:
+                try:
+                    self.request_format_site(target_urls, url_name, proxy, args_urlencode, i, index)
+                    save_market_page_redis(i)  # 保存已爬取的页码
+                except BaseException as e:
+                    print(e)
+                    CRAWL_LOG.error('request exception occurred:%s' % e)
+                    save_redis(self.jobs)
+
+        if is_generate:
+            return target_urls
+
+    def distribute_urls(self, url, url_name, city_code, args, args_urlencode, i, target_urls):
+        """
+        分发生成url
+        :param url: url
+        :param url_name: url别名
+        :param city_code: 城市代码
+        :param args: 搜索关键词
+        :param args_urlencode: 已url编码的搜索关键词
+        :param i: 页码
+        :param target_urls: 目标url
+        :return:
+        """
+        if 'zhilian' in url_name:
+            i *= 90
+            temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+            target_urls.add(temp_url)
+
+        elif 'parser_ganji' == url_name:
+            ganji_args = self.get_ganji_search_args()
+            if args in ganji_args:
+                args_value = ganji_args.get(args)
+                temp_url = url.format(c=city_code, p=i, q=args_value)
                 target_urls.add(temp_url)
 
-            elif 'parser_ganji' == url_name:
-                ganji_args = self.get_ganji_search_args()
-                if args in ganji_args:
-                    args_value = ganji_args.get(args)
-                    temp_url = url.format(c=city_code, p=i, q=args_value)
-                    target_urls.add(temp_url)
+        elif 'parser_ganji_it' == url_name:
+            i = (i - 1) * 32
+            temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+            target_urls.add(temp_url)
 
-            elif 'parser_ganji_it' == url_name:
-                i = (i - 1) * 32
-                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                target_urls.add(temp_url)
+        elif '58' in url_name:
+            temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+            target_urls.add(temp_url)
 
-            elif '58' in url_name:
-                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                target_urls.add(temp_url)
+        elif 'parser_chinahr' == url_name:
+            temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+            target_urls.add(temp_url)
 
-            elif 'parser_chinahr' == url_name:
-                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                target_urls.add(temp_url)
+        elif 'gongzuochong' in url_name:
+            temp_url = url.format(c=city_code, p=i, q=args_urlencode)
+            target_urls.add(temp_url)
 
-            elif 'gongzuochong' in url_name:
-                temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-                target_urls.add(temp_url)
+        elif 'baidu' in url_name:
+            city_code1 = urllib.parse.quote(city_code)
+            city_code2 = urllib.parse.quote(city_code1)
+            if 'parser_baidu' == url_name:
+                # 百度百聘的api把城市参数做了两层url编码
+                token_url = 'https://zhaopin.baidu.com/quanzhi?city={c}&query={q}'.format(c=city_code1,
+                                                                                          q=args_urlencode)
 
-            elif 'baidu' in url_name:
-                city_code1 = urllib.parse.quote(city_code)
-                city_code2 = urllib.parse.quote(city_code1)
-                if 'parser_baidu' == url_name:
-                    # 百度百聘的api把城市参数做了两层url编码
-                    token_url = 'https://zhaopin.baidu.com/quanzhi?city={c}&query={q}'.format(c=city_code1,
-                                                                                              q=args_urlencode)
-
-                elif 'parser_baidu_jianzhi' == url_name:
-                    # 百度百聘的api把城市参数做了两层url编码
-                    token_url = 'https://zhaopin.baidu.com/jianzhi?city={c}&query={q}'.format(c=city_code1,
-                                                                                              q=args_urlencode)
-                else:
-                    token_url = ''
-                token = self.get_baidu_token(token_url, url_name)
-                if i == 1:
-                    i -= 1
-                i *= 20
-                temp_url = url.format(c=city_code2, p=i, q=args_urlencode, token=token)
-                target_urls.add(temp_url)
-
-            elif 'yjs' in url_name:
-                i -= 1
-                if i < 0:
-                    i = 0
-                i *= 10
-                temp_url = url.format(p=i, q=args_urlencode)
-                target_urls.add(temp_url)
-
-            elif 'jobcn' in url_name:
-                target_urls.add(url)
-
-            elif 'parser_jiaoshizhaopin' == url_name:
-                args = urllib.parse.quote(args, encoding='gb2312')
-                temp_url = url.format(p=i, q=args)
-                target_urls.add(temp_url)
-
-            elif 'shuobo' in url_name and i == 1:
-                temp_url = 'http://www.51shuobo.com/s/result/kt1_kw-{q}/'.format(q=args_urlencode)
-                target_urls.add(temp_url)
-
-            elif 'liepin' in url_name:
-                i -= 1
-                temp_url = url.format(p=i, q=args_urlencode)
-                target_urls.add(temp_url)
-
-            elif 'job1001' in url_name:
-                i -= 1
-                temp_url = url.format(p=i, q=args_urlencode)
-                target_urls.add(temp_url)
-
-            elif 'linkin' in url_name:
-                city = '中国'
-                c = urllib.parse.quote(city)
-                if i == 1:
-                    i = 0
-                i *= 25
-                temp_url = url.format(c=c, p=i, q=args_urlencode)
-                target_urls.add(temp_url)
-
-            elif 'telecomhr' in url_name:
-                args = urllib.parse.quote(args, encoding='gb2312')
-                temp_url = url.format(p=i, q=args)
-                target_urls.add(temp_url)
+            elif 'parser_baidu_jianzhi' == url_name:
+                # 百度百聘的api把城市参数做了两层url编码
+                token_url = 'https://zhaopin.baidu.com/jianzhi?city={c}&query={q}'.format(c=city_code1,
+                                                                                          q=args_urlencode)
             else:
-                temp_url = url.format(p=i, q=args_urlencode)
-                target_urls.add(temp_url)
+                token_url = ''
+            token = self.get_baidu_token(token_url, url_name)
+            if i == 1:
+                i -= 1
+            i *= 20
+            temp_url = url.format(c=city_code2, p=i, q=args_urlencode, token=token)
+            target_urls.add(temp_url)
 
+        elif 'yjs' in url_name:
+            i -= 1
+            if i < 0:
+                i = 0
+            i *= 10
+            temp_url = url.format(p=i, q=args_urlencode)
+            target_urls.add(temp_url)
+
+        elif 'jobcn' in url_name:
+            target_urls.add(url)
+
+        elif 'parser_jiaoshizhaopin' == url_name:
+            args = urllib.parse.quote(args, encoding='gb2312')
+            temp_url = url.format(p=i, q=args)
+            target_urls.add(temp_url)
+
+        elif 'shuobo' in url_name and i == 1:
+            temp_url = 'http://www.51shuobo.com/s/result/kt1_kw-{q}/'.format(q=args_urlencode)
+            target_urls.add(temp_url)
+
+        elif 'liepin' in url_name:
+            i -= 1
+            temp_url = url.format(p=i, q=args_urlencode)
+            target_urls.add(temp_url)
+
+        elif 'job1001' in url_name:
+            i -= 1
+            temp_url = url.format(p=i, q=args_urlencode)
+            target_urls.add(temp_url)
+
+        elif 'linkin' in url_name:
+            city = '中国'
+            c = urllib.parse.quote(city)
+            if i == 1:
+                i = 0
+            i *= 25
+            temp_url = url.format(c=c, p=i, q=args_urlencode)
+            target_urls.add(temp_url)
+
+        elif 'telecomhr' in url_name:
+            args = urllib.parse.quote(args, encoding='gb2312')
+            temp_url = url.format(p=i, q=args)
+            target_urls.add(temp_url)
+        else:
+            temp_url = url.format(p=i, q=args_urlencode)
+            target_urls.add(temp_url)
         return target_urls
 
     def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
@@ -946,70 +1020,76 @@ class BaseCrawl(RequestHeader):
         }
 
         # 开始请求
-        if 'zhuopin' in url_name:
-            response = requests.post(url, headers=self.header, data=zhuopin_data, proxies=proxy,
-                                     timeout=(3, 7), verify=False)
-        elif 'lagou' in url_name:
-            cookie = self.get_cookie(lagou_start_url)
-            response = requests.post(url, headers=self.header, data=lagou_data, proxies=proxy,
-                                     timeout=(3, 7), verify=False, cookies=cookie)
-        elif 'dajie' in url_name:
+        response = None
+        try:
+            if 'zhuopin' in url_name:
+                response = requests.post(url, headers=self.header, data=zhuopin_data, proxies=proxy,
+                                         timeout=(3, 7), verify=False)
+            elif 'lagou' in url_name:
+                cookie = self.get_cookie(lagou_start_url)
+                response = requests.post(url, headers=self.header, data=lagou_data, proxies=proxy,
+                                         timeout=(3, 7), verify=False, cookies=cookie)
+            elif 'dajie' in url_name:
 
-            # 神奇，大街网不能更新header，只能直接设置header,应该有字段顺序关系
-            header = {
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'User-Agent': random.choice(USER_AGENT),
-                'Accept-Language': 'zh-CN,zh;q=0.9',
-                'Connection': 'keep-alive',
-                'Accept-Encoding': 'gzip, deflate',
-                'Upgrade-Insecure-Requests': '1',
-                'dnt': '1',
-                'x-requested-with': 'XMLHttpRequest',
-                'referer': 'https://so.dajie.com/job/search?keyword={q}&from=job&clicktype=blank'.format(
-                    q=args_urlencode)
-            }
+                # 神奇，大街网不能更新header，只能直接设置header,应该有字段顺序关系
+                header = {
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'User-Agent': random.choice(USER_AGENT),
+                    'Accept-Language': 'zh-CN,zh;q=0.9',
+                    'Connection': 'keep-alive',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Upgrade-Insecure-Requests': '1',
+                    'dnt': '1',
+                    'x-requested-with': 'XMLHttpRequest',
+                    'referer': 'https://so.dajie.com/job/search?keyword={q}&from=job&clicktype=blank'.format(
+                        q=args_urlencode)
+                }
 
-            cookie = self.get_cookie(dajie_start_url, url_name, args_urlencode)
-            response = requests.get(url, headers=header, proxies=proxy, timeout=(3, 7), verify=False,
-                                    cookies=cookie)
-        elif 'chinahr_old' in url_name:
-            cookie = self.get_cookie(chinahr_url, url_name, args_urlencode)
-            response = requests.get(url, header=self.header, proxies=proxy, timeout=(3, 7), verify=False,
-                                    cookies=cookie)
+                cookie = self.get_cookie(dajie_start_url, url_name, args_urlencode)
+                response = requests.get(url, headers=header, proxies=proxy, timeout=(3, 7), verify=False,
+                                        cookies=cookie)
+            elif 'chinahr_old' in url_name:
+                cookie = self.get_cookie(chinahr_url, url_name, args_urlencode)
+                response = requests.get(url, header=self.header, proxies=proxy, timeout=(3, 7), verify=False,
+                                        cookies=cookie)
 
-        elif 'cjol' in url_name:
-            header = self.header
-            header.update({
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'Accept-Language': 'zh-CN,zh;q=0.9',
-                'dnt': '1',
-                'x-requested-with': 'XMLHttpRequest',
-            })
-            response = requests.post(url, headers=header, proxies=proxy, timeout=(3, 7), verify=False,
-                                     data=cjol_data)
-        elif 'jobcn' in url_name:
-            response = requests.post(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False,
-                                     data=jobcn_data)
-        elif 'doumi' in url_name:
-            city_code = self.get_doumi_city_codes()
-            # city_code = 'bj'
-            doumi_url = self.DOUMI_COOKIE_URL % city_code
-            session = self.get_session(url_name, doumi_url)
-            response = session.get(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False)
+            elif 'cjol' in url_name:
+                header = self.header
+                header.update({
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Accept-Language': 'zh-CN,zh;q=0.9',
+                    'dnt': '1',
+                    'x-requested-with': 'XMLHttpRequest',
+                })
+                response = requests.post(url, headers=header, proxies=proxy, timeout=(3, 7), verify=False,
+                                         data=cjol_data)
+            elif 'jobcn' in url_name:
+                response = requests.post(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False,
+                                         data=jobcn_data)
+            elif 'doumi' in url_name:
+                city_code = self.get_doumi_city_codes()
+                # city_code = 'bj'
+                doumi_url = self.DOUMI_COOKIE_URL % city_code
+                session = self.get_session(url_name, doumi_url)
+                response = session.get(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False)
 
-        elif 'boss' in url_name:
-            header = self.header
-            header.update(BOSS_COOKIE)
-            response = requests.get(url, headers=header, proxies=proxy, timeout=(3, 7), verify=False)
+            elif 'boss' in url_name:
+                header = self.header
+                header.update(BOSS_COOKIE)
+                response = requests.get(url, headers=header, proxies=proxy, timeout=(3, 7), verify=False)
 
-        else:
-            response = requests.get(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False)
+            else:
+                response = requests.get(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False)
+        except BaseException as e:
+            pass
 
         # 解析网站
-        if response.status_code == 200:
-            save_url_redis({url}, 'market_urls')
-            html = self.decode_request(response)
-            self.parser(html, url_name, url, args_urlencode, index=index)
+        if response:
+            if response.status_code == 200:
+                # 成功请求一次url就保存一次url
+                save_url_redis({url}, 'market_urls')
+                html = self.decode_request(response)
+                self.parser(html, url_name, url, args_urlencode, index=index)
 
     def decode_request(self, response):
         """
@@ -4147,6 +4227,7 @@ class GeventCrawl(BaseCrawl):
         :return:
         """
         tasks = []
+        gevent_pool = Pool(GEVENT_POOL)
         for urls in self.request_urls:
             url = urls.get('url')
             url_name = urls.get('type')
@@ -4158,9 +4239,11 @@ class GeventCrawl(BaseCrawl):
             for args in self.search_args:
                 proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
-                task = gevent.spawn(self.request_url, url, url_name, proxy, args_urlencode, args)
+                task = gevent_pool.spawn(self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
-        gevent.joinall(tasks)
+        done = gevent.joinall(tasks)
+        if done:
+            gevent.killall(tasks)
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
@@ -4182,7 +4265,9 @@ class GeventCrawl(BaseCrawl):
             for target_url in target_urls:
                 task = gevent.spawn(self.request_format_url, target_url, url_name, proxy, args_urlencode, i, index)
                 tasks.append(task)
-            gevent.joinall(tasks)
+            done = gevent.joinall(tasks)
+            if done:
+                gevent.killall(tasks)
         except BaseException as e:
             print(e)
             CRAWL_LOG.error('request exception occurred:%s' % e)
@@ -4201,7 +4286,7 @@ class ThreadPoolCrawl(BaseCrawl):
         :return:
         """
 
-        thread = ThreadPoolExecutor()
+        thread = ThreadPoolExecutor(THREAD_POOL)
         tasks = []
         for urls in self.request_urls:
             url = urls.get('url')
@@ -4231,7 +4316,7 @@ class ThreadPoolCrawl(BaseCrawl):
         :param index: 搜索关键词
         :return:
         """
-        thread = ThreadPoolExecutor()
+        thread = ThreadPoolExecutor(THREAD_POOL)
         # 遍历请求
         # print(target_urls)
         try:
@@ -4256,7 +4341,7 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
         :return:
         """
         loop = asyncio.get_event_loop()
-        thread = ThreadPoolExecutor()
+        thread = ThreadPoolExecutor(THREAD_POOL)
         tasks = []
         for urls in self.request_urls:
             url = urls.get('url')
@@ -4340,16 +4425,24 @@ def save_url_redis(se, key=None):
     :return:
     """
     conn = redis.Redis(connection_pool=POOL)
+    cont = ''
     if not key:
         key = 'target_urls'
     if se:
         # 检测是否已有值
-        cont = conn.get(key)
+        try:
+            cont = conn.get(key)
+        except redis.exceptions.ConnectionError as e:
+            print('协程因为并发性能太强导致并发量太大,redis数据库无法承受,请去掉一部分待爬取网站或者改用线程池的方式', e)
+            gevent.sleep(5)
         if cont:
             cont = eval(cont)
             se.update(cont)
-        print('数据库内存有 %s 个目标url待爬取' % len(se))
         conn.set(key, str(se))
+        if key == 'target_urls':
+            print('数据库内存有 %s 个目标url待爬取' % len(se))
+        if key == 'market_urls':
+            print('已爬取了 %s 个目标url' % len(se))
 
 
 def save_market_page_redis(page, key=None):
@@ -4387,11 +4480,15 @@ def get_url_redis(key=None):
     :return:
     """
     conn = redis.Redis(connection_pool=POOL)
+    cont = ''
     if not key:
         key = 'target_urls'
-    conn = conn.get(key)
-    if conn:
-        urls = eval(conn)
+    try:
+        cont = conn.get(key)
+    except redis.exceptions.ConnectionError as e:
+        print('协程因为并发性能太强导致并发量太大,redis数据库无法承受,请去掉一部分待爬取网站或者改用线程池的方式', e)
+    if cont:
+        urls = eval(cont)
         print('数据库内存有 %s 个目标url待爬取' % len(urls))
         return urls
 
@@ -4425,6 +4522,12 @@ def main(cls=None):
 
 
 if __name__ == '__main__':
-    # main()  # 协程方式, 测试时需要查看报错结果可以使用gevent协程的方法
+    
+    main()  # 协程方式, 测试时需要查看报错结果可以使用gevent协程的方法
     # main(ThreadPoolCrawl)  # 线程池的方式
-    main(ThreadPoolAsynicCrawl)  # 线程池+异步的方式
+    # main(ThreadPoolAsynicCrawl)  # 线程池+异步的方式
+
+    # t = get_url_redis()
+    # m = get_url_redis('market_urls')
+    # print(t,len(t))
+    # print(m,len(m))

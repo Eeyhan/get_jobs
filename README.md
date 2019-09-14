@@ -8,10 +8,19 @@
 
 ### 二次开发者请遵纪守法，且爬到的数据永远不以商业形式售卖，否则后果自负
 
-+ 说明：如果遇到这个提示：[ UserWarning: libuv only supports millisecond timer resolution; all times less will be set to 1 ms
-  self.timer = get_hub().loop.timer(seconds or 0.0, ref=ref, priority=priority) ] 这是一个gevent的已知bug，对程序运行没有任何影响，可以忽略
++ 说明：如果遇到这个提示：
+
+	“UserWarning: libuv only supports millisecond timer resolution; all times less will be set to 1 ms  self.timer = get_hub().loop.timer(seconds or 0.0, ref=ref, priority=priority)”
+	
+	* 这是一个gevent的已知bug，对程序运行没有任何影响，可以忽略
 
 ## 更新进度：
+
++ 2019/9/14更新：
+
+	* 优化协程并发问题
+	* 优化断点续爬功能
+	* 优化已知的小bug
 
 + 2019/9/12更新：
 
@@ -114,11 +123,11 @@
 
 ## 运行说明：
 
-+ 自行配置redis数据库，如果不想用redis数据库可自行修改其他数据库
++ 1.自行配置redis数据库，如果不想用redis数据库可自行修改其他数据库
 
-+ 在运行v1.py文件之前，请使用浏览器访问boss直聘网，利用抓包工具将__zp_stoken__字段拿到，替换掉config.py里的__zp_stoken__字段即可(因为boss直聘更新，目前暂时未找到boss直聘的token来源,希望有能力的老哥可以解决这个问题)
++ 2。在运行v1.py文件之前，请使用浏览器访问boss直聘网，利用抓包工具将__zp_stoken__字段拿到，替换掉config.py里的__zp_stoken__字段即可(因为boss直聘更新，目前暂时未找到boss直聘的token来源,希望有能力的老哥可以解决这个问题)
 
-+ 直接运行v1.py文件即可，其有三种运行方式：
++ 3.直接运行v1.py文件即可，其有三种运行方式：
 
 	* main()  # 协程方式, 测试时需要查看报错结果可以使用gevent协程的方法
     * main(ThreadPoolCrawl)  # 线程池的方式
@@ -126,10 +135,12 @@
 	
 	默认是协程方式，建议选用线程池+异步的方式，需要用哪种方式取消该注释即可
 	
-+ 防IP封禁方式运行：先进入proxy文件夹，运行proxy.py爬取好代理并组成代理池，再运行v1.py文件即可  
++ 4.如果需要解决IP封禁问题：先进入proxy文件夹，运行proxy.py爬取好代理并组成代理池，再运行v1.py文件即可  
 
 
-+ 更多配置说明请自行阅读config.py文件说明，支持自定制，自添加，二次开发（再次强调，请遵纪手法，否则后果自负）
++ 更多配置说明请自行阅读config.py的文件说明，支持自定制，自添加，二次开发（再次强调，请遵纪手法，否则后果自负）
+
++ 有问题请提交issue，有空我会更新
 
 ### 运行结果：
 

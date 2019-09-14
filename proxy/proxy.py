@@ -1274,10 +1274,10 @@ if __name__ == '__main__':
     """以下根据自己的使用需求取消注释运行，注意：千万不能三个方法同时运行，会导致数据紊乱"""
     start = time.time()
     # 第一种，使用协程，速度稍微慢些，但是占用资源小
-    # main_gevent()
+    main_gevent()
 
     # 第二种，使用线程池，速度最快
-    res = main_thread_pool()
+    # res = main_thread_pool()
 
     # 第三种，使用线程池+异步io，综合性更强，推荐该方法
     # res2 = main_thread_pool_asynicio()
@@ -1287,4 +1287,4 @@ if __name__ == '__main__':
     # ############### 数据库有值时 ###############
 
     # res = get_redis()
-    # print(res)
+    # # print(res)

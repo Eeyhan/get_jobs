@@ -8,6 +8,7 @@ import sys
 import logging
 import redis
 
+
 # 项目根目录
 BASE_DIR = os.path.dirname(__file__)
 
@@ -194,7 +195,9 @@ REQEUST_URLS = [
 '可以自行设置为其他的数据库'
 POOL = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
 POOL2 = redis.ConnectionPool(host='127.0.0.1', max_connections=5, decode_responses=True, db=2)
-POOL3 = redis.ConnectionPool(host='127.0.0.1', max_connections=5, decode_responses=True, db=3)
+POOL3 = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
+POOL4 = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
+POOL5 = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
 
 # 搜索关键词
 '可以自己添加关键词'
@@ -278,11 +281,21 @@ SEARCH_ARGS = ['钣金', '建筑设计师', '制片', '行政经理', '店员/�
                '信用卡', '全栈工程师', '旅游策划师', '黑盒测试', '文秘', '行政总监/经理', '信托', '组装工', '餐饮学徒', '送餐员', '婚礼策划', '网页设计师', '游戏后端开发',
                '人力资源', '橱柜设计', '前端开发', '游戏角色', '精益工程师', '交易员']
 
+
 # 定时自动保存已爬取的职位的间隔时间
 '可自行设置，单位为秒'
 INTERVAL = 30
 
-# 日志相关
+# 爬取深度,最大页码
+'可自行设置'
+END_PAGE = 100
+
+# 最大协程数
+'可根据自己的电脑配置自行设置数量,协程池不能设置太大的量，因为协程的并发性能太强导致并发量太大，redis连接池无法承受，原则上不要用协程的方式爬取，容易报错'
+GEVENT_POOL = 10
+
+# 最大线程池数
+THREAD_POOL = (os.cpu_count() or 1) * 4
 
 # 设置日志等级
 LOG_LEVEL = logging.INFO
