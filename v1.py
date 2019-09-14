@@ -32,8 +32,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from proxy.proxy import get_redis as get_proxy_redis
-from config import USER_AGENT, REQEUST_URLS, ZHUOPIN_CLIENT_ID, LAGOU_SHOW, POOL, POOL2, POOL4
-from config import POOL3, BOSS_COOKIE, SEARCH_ARGS, INTERVAL, END_PAGE, GEVENT_POOL, THREAD_POOL
+from config import USER_AGENT, REQEUST_URLS, ZHUOPIN_CLIENT_ID, LAGOU_SHOW, POOL, POOL2, POOL3
+from config import BOSS_COOKIE, SEARCH_ARGS, INTERVAL, END_PAGE, GEVENT_POOL, THREAD_POOL
 from logger import logger
 
 requests.packages.urllib3.disable_warnings()
@@ -247,76 +247,75 @@ class BaseCrawl(RequestHeader):
         获取58网的城市代码
         :return:
         """
-        # codes = ['hf', 'wuhu', 'bengbu', 'fy', 'hn', 'anqing', 'suzhou', 'la', 'huaibei', 'chuzhou', 'mas', 'tongling',
-        #          'xuancheng', 'bozhou', 'huangshan', 'chizhou', 'ch', 'hexian', 'hq', 'tongcheng', 'ningguo',
-        #          'tianchang', 'dongzhi', 'wuweixian', 'fz', 'xm', 'qz', 'pt', 'zhangzhou', 'nd', 'sm', 'np', 'ly',
-        #          'wuyishan', 'shishi', 'jinjiangshi', 'nananshi', 'longhai', 'shanghangxian', 'fuanshi', 'fudingshi',
-        #          'anxixian', 'yongchunxian', 'yongan', 'zhangpu', 'sz', 'gz', 'dg', 'fs', 'zs', 'zh', 'huizhou', 'jm',
-        #          'st', 'zhanjiang', 'zq', 'mm', 'jy', 'mz', 'qingyuan', 'yj', 'sg', 'heyuan', 'yf', 'sw', 'chaozhou',
-        #          'taishan', 'yangchun', 'sd', 'huidong', 'boluo', 'haifengxian', 'kaipingshi', 'lufengshi', 'nn',
-        #          'liuzhou', 'gl', 'yulin', 'wuzhou', 'bh', 'gg', 'qinzhou', 'baise', 'hc', 'lb', 'hezhou', 'fcg',
-        #          'chongzuo', 'guipingqu', 'beiliushi', 'bobaixian', 'cenxi', 'gy', 'zunyi', 'qdn', 'qn', 'lps', 'bijie',
-        #          'tr', 'anshun', 'qxn', 'renhuaishi', 'qingzhen', 'lz', 'tianshui', 'by', 'qingyang', 'pl', 'jq',
-        #          'zhangye', 'wuwei', 'dx', 'jinchang', 'ln', 'linxia', 'jyg', 'gn', 'dunhuang', 'haikou', 'sanya',
-        #          'wzs', 'sansha', 'qh', 'wenchang', 'wanning', 'tunchang', 'qiongzhong', 'lingshui', 'df', 'da', 'cm',
-        #          'baoting', 'baish', 'danzhou', 'zz', 'luoyang', 'xx', 'ny', 'xc', 'pds', 'ay', 'jiaozuo', 'sq',
-        #          'kaifeng', 'puyang', 'zk', 'xy', 'zmd', 'luohe', 'smx', 'hb', 'jiyuan', 'mg', 'yanling', 'yuzhou',
-        #          'changge', 'lingbaoshi', 'qixianqu', 'ruzhou', 'xiangchengshi', 'yanshiqu', 'changyuan', 'huaxian',
-        #          'linzhou', 'qinyang', 'mengzhou', 'wenxian', 'weishixian', 'lankaoxian', 'tongxuxian', 'lyxinan',
-        #          'yichuan', 'mengjinqu', 'lyyiyang', 'wugang', 'yongcheng', 'suixian', 'luyi', 'yingchixian', 'shenqiu',
-        #          'taikang', 'shangshui', 'qixianq', 'junxian', 'fanxian', 'gushixian', 'huaibinxian', 'dengzhou',
-        #          'xinye', 'hrb', 'dq', 'qqhr', 'mdj', 'suihua', 'jms', 'jixi', 'sys', 'hegang', 'heihe', 'yich', 'qth',
-        #          'dxal', 'shanda', 'shzhaodong', 'zhaozhou', 'wh', 'yc', 'xf', 'jingzhou', 'shiyan', 'hshi', 'xiaogan',
-        #          'hg', 'es', 'jingmen', 'xianning', 'ez', 'suizhou', 'qianjiang', 'tm', 'xiantao', 'snj', 'yidou',
-        #          'hanchuan', 'zaoyang', 'wuxueshi', 'zhongxiangshi', 'jingshanxian', 'shayangxian', 'songzi',
-        #          'guangshuishi', 'chibishi', 'laohekou', 'gucheng', 'yichengshi', 'nanzhang', 'yunmeng', 'anlu', 'dawu',
-        #          'xiaochang', 'dangyang', 'zhijiang', 'jiayuxian', 'suixia', 'cs', 'zhuzhou', 'yiyang', 'changde', 'hy',
-        #          'xiangtan', 'yy', 'chenzhou', 'shaoyang', 'hh', 'yongzhou', 'ld', 'xiangxi', 'zjj', 'liling', 'lixian',
-        #          'czguiyang', 'zixing', 'yongxing', 'changningshi', 'qidongxian', 'hengdong', 'lengshuijiangshi',
-        #          'lianyuanshi', 'shuangfengxian', 'shaoyangxian', 'shaodongxian', 'yuanjiangs', 'nanxian', 'qiyang',
-        #          'xiangyin', 'huarong', 'cilixian', 'zzyouxian', 'sjz', 'bd', 'ts', 'lf', 'hd', 'qhd', 'cangzhou', 'xt',
-        #          'hs', 'zjk', 'chengde', 'dingzhou', 'gt', 'zhangbei', 'zx', 'zd', 'qianan', 'renqiu', 'sanhe', 'wuan',
-        #          'xionganxinqu', 'lfyanjiao', 'zhuozhou', 'hejian', 'huanghua', 'cangxian', 'cixian', 'shexian',
-        #          'bazhou', 'xianghe', 'lfguan', 'zunhua', 'qianxixian', 'yutianxian', 'luannanxian', 'shaheshi', 'su',
-        #          'nj', 'wx', 'cz', 'xz', 'nt', 'yz', 'yancheng', 'ha', 'lyg', 'taizhou', 'suqian', 'zj', 'shuyang',
-        #          'dafeng', 'rugao', 'qidong', 'liyang', 'haimen', 'donghai', 'yangzhong', 'xinghuashi', 'xinyishi',
-        #          'taixing', 'rudong', 'pizhou', 'xzpeixian', 'jingjiang', 'jianhu', 'haian', 'dongtai', 'danyang',
-        #          'baoyingx', 'guannan', 'guanyun', 'jiangyan', 'jintan', 'szkunshan', 'sihong', 'siyang', 'jurong',
-        #          'sheyang', 'funingxian', 'xiangshui', 'xuyi', 'jinhu', 'nc', 'ganzhou', 'jj', 'yichun', 'ja', 'sr',
-        #          'px', 'fuzhou', 'jdz', 'xinyu', 'yingtan', 'yxx', 'lepingshi', 'jinxian', 'fenyi', 'fengchengshi',
-        #          'zhangshu', 'gaoan', 'yujiang', 'nanchengx', 'fuliangxian', 'cc', 'jl', 'sp', 'yanbian', 'songyuan',
-        #          'bc', 'th', 'baishan', 'liaoyuan', 'gongzhuling', 'meihekou', 'fuyuxian', 'changlingxian', 'huadian',
-        #          'panshi', 'lishu', 'sy', 'dl', 'as', 'jinzhou', 'fushun', 'yk', 'pj', 'cy', 'dandong', 'liaoyang',
-        #          'benxi', 'hld', 'tl', 'fx', 'pld', 'wfd', 'dengta', 'fengcheng', 'beipiao', 'kaiyuan', 'yinchuan',
-        #          'wuzhong', 'szs', 'zw', 'guyuan', 'hu', 'bt', 'chifeng', 'erds', 'tongliao', 'hlbe', 'bycem', 'wlcb',
-        #          'xl', 'xam', 'wuhai', 'alsm', 'hlr', 'xn', 'hx', 'haibei', 'guoluo', 'haidong', 'huangnan', 'ys',
-        #          'hainan', 'geermushi', 'qd', 'jn', 'yt', 'wf', 'linyi', 'zb', 'jining', 'ta', 'lc', 'weihai',
-        #          'zaozhuang', 'dz', 'rizhao', 'dy', 'heze', 'bz', 'lw', 'zhangqiu', 'kl', 'zc', 'shouguang', 'longkou',
-        #          'caoxian', 'shanxian', 'feicheng', 'gaomi', 'guangrao', 'huantaixian', 'juxian', 'laizhou', 'penglai',
-        #          'qingzhou', 'rongcheng', 'rushan', 'tengzhou', 'xintai', 'zhaoyuan', 'zoucheng', 'zouping', 'linqing',
-        #          'chiping', 'hzyc', 'boxing', 'dongming', 'juye', 'wudi', 'qihe', 'weishan', 'yuchengshi', 'linyixianq',
-        #          'leling', 'laiyang', 'ningjin', 'gaotang', 'shenxian', 'yanggu', 'guanxian', 'pingyi', 'tancheng',
-        #          'yiyuanxian', 'wenshang', 'liangshanx', 'lijin', 'yinanxian', 'qixia', 'ningyang', 'dongping',
-        #          'changyishi', 'anqiu', 'changle', 'linqu', 'juancheng', 'ty', 'linfen', 'dt', 'yuncheng', 'jz',
-        #          'changzhi', 'jincheng', 'yq', 'lvliang', 'xinzhou', 'shuozhou', 'linyixian', 'qingxu', 'liulin',
-        #          'gaoping', 'zezhou', 'xiangyuanxian', 'xiaoyi', 'xa', 'xianyang', 'baoji', 'wn', 'hanzhong', 'yl',
-        #          'yanan', 'ankang', 'sl', 'tc', 'shenmu', 'hancheng', 'fugu', 'jingbian', 'dingbian', 'cd', 'mianyang',
-        #          'deyang', 'nanchong', 'yb', 'zg', 'ls', 'luzhou', 'dazhou', 'scnj', 'suining', 'panzhihua', 'ms', 'ga',
-        #          'zy', 'liangshan', 'guangyuan', 'ya', 'bazhong', 'ab', 'ganzi', 'anyuexian', 'guanghanshi',
-        #          'jianyangshi', 'renshouxian', 'shehongxian', 'dazu', 'xuanhan', 'qux', 'changningx', 'xj', 'changji',
-        #          'bygl', 'yili', 'aks', 'ks', 'hami', 'klmy', 'betl', 'tlf', 'ht', 'shz', 'kzls', 'ale', 'wjq', 'tmsk',
-        #          'kel', 'alt', 'tac', 'lasa', 'rkz', 'sn', 'linzhi', 'changdu', 'nq', 'al', 'rituxian', 'gaizexian',
-        #          'km', 'qj', 'dali', 'honghe', 'yx', 'lj', 'ws', 'cx', 'bn', 'zt', 'dh', 'pe', 'bs', 'lincang',
-        #          'diqing', 'nujiang', 'milexian', 'anningshi', 'xuanwushi', 'hz', 'nb', 'wz', 'jh', 'jx', 'tz', 'sx',
-        #          'huzhou', 'lishui', 'quzhou', 'zhoushan', 'yueqingcity', 'ruiancity', 'yiwu', 'yuyao', 'zhuji',
-        #          'xiangshanxian', 'wenling', 'tongxiang', 'cixi', 'changxing', 'jiashanx', 'haining', 'deqing',
-        #          'dongyang', 'anji', 'cangnanxian', 'linhai', 'yongkang', 'yuhuan', 'pinghushi', 'haiyan', 'wuyix',
-        #          'shengzhou', 'xinchang', 'jiangshanshi', 'pingyangxian', 'hk', 'am', 'tw', 'quanguo', 'cn',
-        #          'gllosangeles', 'glsanfrancisco', 'glnewyork', 'gltoronto', 'glvancouver', 'glgreaterlondon',
-        #          'glmoscow', 'glseoul', 'gltokyo', 'glsingapore', 'glbangkok', 'glchiangmai', 'gldubai', 'glauckland',
-        #          'glsydney', 'glmelbourne', 'city']
-        # return codes
-        return ['changningx', 'gaizexian']
+        codes = ['hf', 'wuhu', 'bengbu', 'fy', 'hn', 'anqing', 'suzhou', 'la', 'huaibei', 'chuzhou', 'mas', 'tongling',
+                 'xuancheng', 'bozhou', 'huangshan', 'chizhou', 'ch', 'hexian', 'hq', 'tongcheng', 'ningguo',
+                 'tianchang', 'dongzhi', 'wuweixian', 'fz', 'xm', 'qz', 'pt', 'zhangzhou', 'nd', 'sm', 'np', 'ly',
+                 'wuyishan', 'shishi', 'jinjiangshi', 'nananshi', 'longhai', 'shanghangxian', 'fuanshi', 'fudingshi',
+                 'anxixian', 'yongchunxian', 'yongan', 'zhangpu', 'sz', 'gz', 'dg', 'fs', 'zs', 'zh', 'huizhou', 'jm',
+                 'st', 'zhanjiang', 'zq', 'mm', 'jy', 'mz', 'qingyuan', 'yj', 'sg', 'heyuan', 'yf', 'sw', 'chaozhou',
+                 'taishan', 'yangchun', 'sd', 'huidong', 'boluo', 'haifengxian', 'kaipingshi', 'lufengshi', 'nn',
+                 'liuzhou', 'gl', 'yulin', 'wuzhou', 'bh', 'gg', 'qinzhou', 'baise', 'hc', 'lb', 'hezhou', 'fcg',
+                 'chongzuo', 'guipingqu', 'beiliushi', 'bobaixian', 'cenxi', 'gy', 'zunyi', 'qdn', 'qn', 'lps', 'bijie',
+                 'tr', 'anshun', 'qxn', 'renhuaishi', 'qingzhen', 'lz', 'tianshui', 'by', 'qingyang', 'pl', 'jq',
+                 'zhangye', 'wuwei', 'dx', 'jinchang', 'ln', 'linxia', 'jyg', 'gn', 'dunhuang', 'haikou', 'sanya',
+                 'wzs', 'sansha', 'qh', 'wenchang', 'wanning', 'tunchang', 'qiongzhong', 'lingshui', 'df', 'da', 'cm',
+                 'baoting', 'baish', 'danzhou', 'zz', 'luoyang', 'xx', 'ny', 'xc', 'pds', 'ay', 'jiaozuo', 'sq',
+                 'kaifeng', 'puyang', 'zk', 'xy', 'zmd', 'luohe', 'smx', 'hb', 'jiyuan', 'mg', 'yanling', 'yuzhou',
+                 'changge', 'lingbaoshi', 'qixianqu', 'ruzhou', 'xiangchengshi', 'yanshiqu', 'changyuan', 'huaxian',
+                 'linzhou', 'qinyang', 'mengzhou', 'wenxian', 'weishixian', 'lankaoxian', 'tongxuxian', 'lyxinan',
+                 'yichuan', 'mengjinqu', 'lyyiyang', 'wugang', 'yongcheng', 'suixian', 'luyi', 'yingchixian', 'shenqiu',
+                 'taikang', 'shangshui', 'qixianq', 'junxian', 'fanxian', 'gushixian', 'huaibinxian', 'dengzhou',
+                 'xinye', 'hrb', 'dq', 'qqhr', 'mdj', 'suihua', 'jms', 'jixi', 'sys', 'hegang', 'heihe', 'yich', 'qth',
+                 'dxal', 'shanda', 'shzhaodong', 'zhaozhou', 'wh', 'yc', 'xf', 'jingzhou', 'shiyan', 'hshi', 'xiaogan',
+                 'hg', 'es', 'jingmen', 'xianning', 'ez', 'suizhou', 'qianjiang', 'tm', 'xiantao', 'snj', 'yidou',
+                 'hanchuan', 'zaoyang', 'wuxueshi', 'zhongxiangshi', 'jingshanxian', 'shayangxian', 'songzi',
+                 'guangshuishi', 'chibishi', 'laohekou', 'gucheng', 'yichengshi', 'nanzhang', 'yunmeng', 'anlu', 'dawu',
+                 'xiaochang', 'dangyang', 'zhijiang', 'jiayuxian', 'suixia', 'cs', 'zhuzhou', 'yiyang', 'changde', 'hy',
+                 'xiangtan', 'yy', 'chenzhou', 'shaoyang', 'hh', 'yongzhou', 'ld', 'xiangxi', 'zjj', 'liling', 'lixian',
+                 'czguiyang', 'zixing', 'yongxing', 'changningshi', 'qidongxian', 'hengdong', 'lengshuijiangshi',
+                 'lianyuanshi', 'shuangfengxian', 'shaoyangxian', 'shaodongxian', 'yuanjiangs', 'nanxian', 'qiyang',
+                 'xiangyin', 'huarong', 'cilixian', 'zzyouxian', 'sjz', 'bd', 'ts', 'lf', 'hd', 'qhd', 'cangzhou', 'xt',
+                 'hs', 'zjk', 'chengde', 'dingzhou', 'gt', 'zhangbei', 'zx', 'zd', 'qianan', 'renqiu', 'sanhe', 'wuan',
+                 'xionganxinqu', 'lfyanjiao', 'zhuozhou', 'hejian', 'huanghua', 'cangxian', 'cixian', 'shexian',
+                 'bazhou', 'xianghe', 'lfguan', 'zunhua', 'qianxixian', 'yutianxian', 'luannanxian', 'shaheshi', 'su',
+                 'nj', 'wx', 'cz', 'xz', 'nt', 'yz', 'yancheng', 'ha', 'lyg', 'taizhou', 'suqian', 'zj', 'shuyang',
+                 'dafeng', 'rugao', 'qidong', 'liyang', 'haimen', 'donghai', 'yangzhong', 'xinghuashi', 'xinyishi',
+                 'taixing', 'rudong', 'pizhou', 'xzpeixian', 'jingjiang', 'jianhu', 'haian', 'dongtai', 'danyang',
+                 'baoyingx', 'guannan', 'guanyun', 'jiangyan', 'jintan', 'szkunshan', 'sihong', 'siyang', 'jurong',
+                 'sheyang', 'funingxian', 'xiangshui', 'xuyi', 'jinhu', 'nc', 'ganzhou', 'jj', 'yichun', 'ja', 'sr',
+                 'px', 'fuzhou', 'jdz', 'xinyu', 'yingtan', 'yxx', 'lepingshi', 'jinxian', 'fenyi', 'fengchengshi',
+                 'zhangshu', 'gaoan', 'yujiang', 'nanchengx', 'fuliangxian', 'cc', 'jl', 'sp', 'yanbian', 'songyuan',
+                 'bc', 'th', 'baishan', 'liaoyuan', 'gongzhuling', 'meihekou', 'fuyuxian', 'changlingxian', 'huadian',
+                 'panshi', 'lishu', 'sy', 'dl', 'as', 'jinzhou', 'fushun', 'yk', 'pj', 'cy', 'dandong', 'liaoyang',
+                 'benxi', 'hld', 'tl', 'fx', 'pld', 'wfd', 'dengta', 'fengcheng', 'beipiao', 'kaiyuan', 'yinchuan',
+                 'wuzhong', 'szs', 'zw', 'guyuan', 'hu', 'bt', 'chifeng', 'erds', 'tongliao', 'hlbe', 'bycem', 'wlcb',
+                 'xl', 'xam', 'wuhai', 'alsm', 'hlr', 'xn', 'hx', 'haibei', 'guoluo', 'haidong', 'huangnan', 'ys',
+                 'hainan', 'geermushi', 'qd', 'jn', 'yt', 'wf', 'linyi', 'zb', 'jining', 'ta', 'lc', 'weihai',
+                 'zaozhuang', 'dz', 'rizhao', 'dy', 'heze', 'bz', 'lw', 'zhangqiu', 'kl', 'zc', 'shouguang', 'longkou',
+                 'caoxian', 'shanxian', 'feicheng', 'gaomi', 'guangrao', 'huantaixian', 'juxian', 'laizhou', 'penglai',
+                 'qingzhou', 'rongcheng', 'rushan', 'tengzhou', 'xintai', 'zhaoyuan', 'zoucheng', 'zouping', 'linqing',
+                 'chiping', 'hzyc', 'boxing', 'dongming', 'juye', 'wudi', 'qihe', 'weishan', 'yuchengshi', 'linyixianq',
+                 'leling', 'laiyang', 'ningjin', 'gaotang', 'shenxian', 'yanggu', 'guanxian', 'pingyi', 'tancheng',
+                 'yiyuanxian', 'wenshang', 'liangshanx', 'lijin', 'yinanxian', 'qixia', 'ningyang', 'dongping',
+                 'changyishi', 'anqiu', 'changle', 'linqu', 'juancheng', 'ty', 'linfen', 'dt', 'yuncheng', 'jz',
+                 'changzhi', 'jincheng', 'yq', 'lvliang', 'xinzhou', 'shuozhou', 'linyixian', 'qingxu', 'liulin',
+                 'gaoping', 'zezhou', 'xiangyuanxian', 'xiaoyi', 'xa', 'xianyang', 'baoji', 'wn', 'hanzhong', 'yl',
+                 'yanan', 'ankang', 'sl', 'tc', 'shenmu', 'hancheng', 'fugu', 'jingbian', 'dingbian', 'cd', 'mianyang',
+                 'deyang', 'nanchong', 'yb', 'zg', 'ls', 'luzhou', 'dazhou', 'scnj', 'suining', 'panzhihua', 'ms', 'ga',
+                 'zy', 'liangshan', 'guangyuan', 'ya', 'bazhong', 'ab', 'ganzi', 'anyuexian', 'guanghanshi',
+                 'jianyangshi', 'renshouxian', 'shehongxian', 'dazu', 'xuanhan', 'qux', 'changningx', 'xj', 'changji',
+                 'bygl', 'yili', 'aks', 'ks', 'hami', 'klmy', 'betl', 'tlf', 'ht', 'shz', 'kzls', 'ale', 'wjq', 'tmsk',
+                 'kel', 'alt', 'tac', 'lasa', 'rkz', 'sn', 'linzhi', 'changdu', 'nq', 'al', 'rituxian', 'gaizexian',
+                 'km', 'qj', 'dali', 'honghe', 'yx', 'lj', 'ws', 'cx', 'bn', 'zt', 'dh', 'pe', 'bs', 'lincang',
+                 'diqing', 'nujiang', 'milexian', 'anningshi', 'xuanwushi', 'hz', 'nb', 'wz', 'jh', 'jx', 'tz', 'sx',
+                 'huzhou', 'lishui', 'quzhou', 'zhoushan', 'yueqingcity', 'ruiancity', 'yiwu', 'yuyao', 'zhuji',
+                 'xiangshanxian', 'wenling', 'tongxiang', 'cixi', 'changxing', 'jiashanx', 'haining', 'deqing',
+                 'dongyang', 'anji', 'cangnanxian', 'linhai', 'yongkang', 'yuhuan', 'pinghushi', 'haiyan', 'wuyix',
+                 'shengzhou', 'xinchang', 'jiangshanshi', 'pingyangxian', 'hk', 'am', 'tw', 'quanguo', 'cn',
+                 'gllosangeles', 'glsanfrancisco', 'glnewyork', 'gltoronto', 'glvancouver', 'glgreaterlondon',
+                 'glmoscow', 'glseoul', 'gltokyo', 'glsingapore', 'glbangkok', 'glchiangmai', 'gldubai', 'glauckland',
+                 'glsydney', 'glmelbourne', 'city']
+        return codes
 
     def get_chinahr_city_code(self):
         """
@@ -598,6 +597,8 @@ class BaseCrawl(RequestHeader):
             city_codes = self.get_gzc_city_code()
         elif 'baidu' in url_name:
             city_codes = self.get_baidu_city_code()
+        elif 'doumi' in url_name:
+            city_codes = self.get_doumi_city_codes()
         else:
             city_codes = []
         return city_codes
@@ -755,7 +756,8 @@ class BaseCrawl(RequestHeader):
                     self.invalid_urls.update(invalid_url)
                     self.target_urls -= self.invalid_urls
                     target_urls = self.target_urls
-                    save_url_redis(self.target_urls)
+                    # 覆盖存储
+                    cover_url_redis(self.target_urls)
                 break
 
             temp_urls = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, target_urls)
@@ -764,7 +766,7 @@ class BaseCrawl(RequestHeader):
             # 请求
             if not is_generate:
                 try:
-                    self.request_format_site(target_urls, url_name, proxy, args_urlencode, i, index)
+                    self.request_format_site(target_urls, url_name, proxy, args_urlencode, i, index, city_code)
                     save_market_page_redis(i)  # 保存已爬取的页码
                 except BaseException as e:
                     print(e)
@@ -884,7 +886,7 @@ class BaseCrawl(RequestHeader):
             target_urls.add(temp_url)
         return target_urls
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
         """
         请求格式化好的所有url
         :param target_urls: 所有目标url,类型为集合
@@ -893,48 +895,33 @@ class BaseCrawl(RequestHeader):
         :param args_urlencode: url编码后后的搜索关键词
         :param i: 页码
         :param index: 搜索关键词
+        :param city_code: 城市代码
         :return:
         """
         # 遍历请求
         # print(target_urls)
-
         # 获取最新待爬取的url
-
         for target_url in target_urls:
             try:
-                self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index)
+                self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index, city_code)
 
-            # except requests.exceptions.ContentDecodingError:
-            #     time.sleep(1)
-            # except requests.exceptions.ConnectTimeout:
-            #     time.sleep(1)
-            # except requests.exceptions.ReadTimeout:
-            #     time.sleep(1)
-            # except urllib3.exceptions.ReadTimeoutError:
-            #     time.sleep(1)
-            # except urllib3.exceptions.ConnectTimeoutError:
-            #     time.sleep(1)
-            # except urllib3.exceptions.MaxRetryError:
-            #     time.sleep(1)
-            # except urllib3.exceptions.ProtocolError:
-            #     time.sleep(1)
-            except BaseException:
-                CRAWL_LOG.error('request exception occurred')
-                time.sleep(3)
+            except BaseException as e:
+                CRAWL_LOG.error('request exception occurred:%s' % e)
+                time.sleep(2)
                 proxy = None
                 if self.proxy_list:
                     if proxy in self.proxy_list:
                         self.proxy_list.remove(proxy)
                     proxy = self.get_proxy()
                 try:
-                    self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index)
+                    self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index, city_code)
 
                 except BaseException as e:
                     print(e)
                     save_redis(self.jobs)
                     CRAWL_LOG.error('request exception occurred:%s' % e)
 
-    def request_format_url(self, url, url_name, proxy, args_urlencode, i, index):
+    def request_format_url(self, url, url_name, proxy, args_urlencode, i, index, city_code):
         """
         请求已经格式化好的url
         :param url: 格式化好的url
@@ -943,6 +930,7 @@ class BaseCrawl(RequestHeader):
         :param args_urlencode: 已编码的搜索职位名参数
         :param i: 页码
         :param index: 搜索的关键词
+        :param city_code: 城市代码
         :return:
         """
         # 中华英才网相关
@@ -1067,8 +1055,6 @@ class BaseCrawl(RequestHeader):
                 response = requests.post(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False,
                                          data=jobcn_data)
             elif 'doumi' in url_name:
-                city_code = self.get_doumi_city_codes()
-                # city_code = 'bj'
                 doumi_url = self.DOUMI_COOKIE_URL % city_code
                 session = self.get_session(url_name, doumi_url)
                 response = session.get(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False)
@@ -1123,7 +1109,10 @@ class BaseCrawl(RequestHeader):
 
         func = getattr(self, url_name)
         if func:
-            func(html, url_name, url, *args, **kwargs)
+            try:
+                func(html, url_name, url, *args, **kwargs)
+            except TypeError as e:
+                CRAWL_LOG.error('parse response exception occurred:%s' % e)
 
     def second_request_parser(self, link, url_name, *args, **kwargs):
         """
@@ -1134,12 +1123,10 @@ class BaseCrawl(RequestHeader):
         :param kwargs:
         :return:
         """
-        time.sleep(1)
         try:
             result = self.second_requetst_parser_body(link, url_name, *args, **kwargs)
             return result
-        except BaseException as e:
-            CRAWL_LOG.error('second request exception occurred:%s' % e)
+        except BaseException:
             time.sleep(3)
             try:
                 result = self.second_requetst_parser_body(link, url_name, *args, **kwargs)
@@ -4164,7 +4151,7 @@ class BaseCrawl(RequestHeader):
 
     def parser_xxx(self, html, url_name, url=None, *args, **kwargs):
         """
-        网解析
+        （模板） 网解析
         :param url: 网址
         :param html:网站源码
         :param url_name: 网站别名
@@ -4194,7 +4181,7 @@ class BaseCrawl(RequestHeader):
 
     def second_parser_xxx(self, html, link=None, *args, **kwargs):
         """
-        网二级网页
+        （模板） 网二级网页
         :param html: 二级网页源码
         :param link: 二级网页的url
         :param args:
@@ -4238,6 +4225,7 @@ class GeventCrawl(BaseCrawl):
             #     args = self.get_args()
             for args in self.search_args:
                 proxy = self.get_proxy()
+                gevent.sleep(0.2)
                 args_urlencode = urllib.parse.quote(args)
                 task = gevent_pool.spawn(self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
@@ -4247,23 +4235,27 @@ class GeventCrawl(BaseCrawl):
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
         """
         请求格式化好的所有url
-        :param target_urls: 所有目标url
+        :param target_urls: 所有目标url,类型为集合
         :param url_name: url别名
         :param proxy: 代理
         :param args_urlencode: url编码后后的搜索关键词
         :param i: 页码
         :param index: 搜索关键词
+        :param city_code: 城市代码
         :return:
         """
         # 遍历请求
         # print(target_urls)
         tasks = []
+        gevent_pool = Pool(GEVENT_POOL + 10)
         try:
             for target_url in target_urls:
-                task = gevent.spawn(self.request_format_url, target_url, url_name, proxy, args_urlencode, i, index)
+                gevent.sleep(0.2)
+                task = gevent_pool.spawn(self.request_format_url, target_url, url_name, proxy, args_urlencode, i, index,
+                                         city_code)
                 tasks.append(task)
             done = gevent.joinall(tasks)
             if done:
@@ -4299,29 +4291,34 @@ class ThreadPoolCrawl(BaseCrawl):
             for args in self.search_args:
                 proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
+                time.sleep(0.2)
                 task = thread.submit(self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
         wait(tasks)
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
         """
         请求格式化好的所有url
-        :param target_urls: 所有目标url
+        :param target_urls: 所有目标url,类型为集合
         :param url_name: url别名
         :param proxy: 代理
         :param args_urlencode: url编码后后的搜索关键词
         :param i: 页码
         :param index: 搜索关键词
+        :param city_code: 城市代码
         :return:
         """
         thread = ThreadPoolExecutor(THREAD_POOL)
         # 遍历请求
         # print(target_urls)
+        tasks = []
         try:
-            tasks = [thread.submit(self.request_format_url, url, url_name, proxy, args_urlencode, i, index) for url in
-                     target_urls]
+            for url in target_urls:
+                task = thread.submit(self.request_format_url, url, url_name, proxy, args_urlencode, i, index, city_code)
+                tasks.append(task)
+                time.sleep(0.2)
             wait(tasks)
         except BaseException as e:
             print(e)
@@ -4354,6 +4351,7 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
             for args in self.search_args:
                 proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
+                time.sleep(0.2)
                 task = loop.run_in_executor(thread, self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
         loop.run_until_complete(asyncio.wait(tasks))
@@ -4361,19 +4359,21 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index):
+    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
         """
         请求格式化好的所有url
-        :param target_urls: 所有目标url
+        :param target_urls: 所有目标url,类型为集合
         :param url_name: url别名
         :param proxy: 代理
         :param args_urlencode: url编码后后的搜索关键词
         :param i: 页码
         :param index: 搜索关键词
+        :param city_code: 城市代码
         :return:
         """
         # 异步的loop下不能再开loop，所以直接继承父类的该方法
-        super(ThreadPoolAsynicCrawl, self).request_format_site(target_urls, url_name, proxy, args_urlencode, i, index)
+        super(ThreadPoolAsynicCrawl, self).request_format_site(target_urls, url_name, proxy, args_urlencode, i, index,
+                                                               city_code)
 
     def get_scheduler(self):
         """
@@ -4419,7 +4419,7 @@ def save_redis(jobs, key=None):
 
 def save_url_redis(se, key=None):
     """
-    存储到redis
+    更新存储到redis
     :param se: 集合
     :param key: redis的key
     :return:
@@ -4434,7 +4434,7 @@ def save_url_redis(se, key=None):
             cont = conn.get(key)
         except redis.exceptions.ConnectionError as e:
             print('协程因为并发性能太强导致并发量太大,redis数据库无法承受,请去掉一部分待爬取网站或者改用线程池的方式', e)
-            gevent.sleep(5)
+            gevent.sleep(2)
         if cont:
             cont = eval(cont)
             se.update(cont)
@@ -4443,6 +4443,21 @@ def save_url_redis(se, key=None):
             print('数据库内存有 %s 个目标url待爬取' % len(se))
         if key == 'market_urls':
             print('已爬取了 %s 个目标url' % len(se))
+
+
+def cover_url_redis(se, key=None):
+    """
+    覆盖存储到redis
+    :param se: 集合
+    :param key: redis的key
+    :return:
+    """
+    conn = redis.Redis(connection_pool=POOL)
+    if not key:
+        key = 'target_urls'
+    if se:
+        conn.set(key, str(se))
+        print('已重新存储 %s 个有效的目标url' % len(se))
 
 
 def save_market_page_redis(page, key=None):
@@ -4470,7 +4485,8 @@ def get_market_page_redis(key=None):
     if not key:
         key = 'page'
     page = conn.get(key)
-    return eval(page)
+    if page:
+        return eval(page)
 
 
 def get_url_redis(key=None):
@@ -4522,12 +4538,7 @@ def main(cls=None):
 
 
 if __name__ == '__main__':
-    
     main()  # 协程方式, 测试时需要查看报错结果可以使用gevent协程的方法
     # main(ThreadPoolCrawl)  # 线程池的方式
     # main(ThreadPoolAsynicCrawl)  # 线程池+异步的方式
 
-    # t = get_url_redis()
-    # m = get_url_redis('market_urls')
-    # print(t,len(t))
-    # print(m,len(m))

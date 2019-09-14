@@ -128,7 +128,7 @@ LAGOU_SHOW = '090fea62d1b84e1d982a52cf822b20bc'
 # boss直聘cookie
 '如果失效可以用浏览器抓包工具重新获取，只需要__zp_stoken__字段'
 BOSS_COOKIE = {
-    'cookie': '__zp_stoken__=1dacyg1nZUJusrAy97BCslcWJ9TsTGXif7Jl9NCFx7O7yvrvntiFb8zLCkK0pattiC9Igj99xKyLbPuzcv%2BsAu3oiQ%3D%3D'
+    'cookie': '__zp_stoken__=a414vIEALziUbJ6eCXmI2Os9orRaP%2BetPHk3RZKyyo5DSCquGlWj%2FF0ouZaIWFiMfxcq%2BoEO%2FtFXAQV1anjLHFa3lQ%3D%3D'
 }
 
 REQEUST_URLS = [
@@ -196,8 +196,6 @@ REQEUST_URLS = [
 POOL = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
 POOL2 = redis.ConnectionPool(host='127.0.0.1', max_connections=5, decode_responses=True, db=2)
 POOL3 = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
-POOL4 = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
-POOL5 = redis.ConnectionPool(host='127.0.0.1', max_connections=100, decode_responses=True, db=1)
 
 # 搜索关键词
 '可以自己添加关键词'
@@ -284,7 +282,7 @@ SEARCH_ARGS = ['钣金', '建筑设计师', '制片', '行政经理', '店员/�
 
 # 定时自动保存已爬取的职位的间隔时间
 '可自行设置，单位为秒'
-INTERVAL = 30
+INTERVAL = 15
 
 # 爬取深度,最大页码
 '可自行设置'
