@@ -46,7 +46,6 @@ class RequestHeader(object):
 
     def __init__(self):
         self.user_agent = USER_AGENT
-        self.flag = False  # 爬取标志位
 
     def request_headers(self):
         """
@@ -124,11 +123,43 @@ class BaseCrawl(RequestHeader):
         self.jobs = []
         self.search_args = SEARCH_ARGS
 
+    def get_urls_flag(self, url_name):
+        """
+        获取对应的url的flag值
+        :param url_name: url别名
+        :return:
+        """
+        name = 'flag_' + url_name.split('_')[1]
+        if hasattr(self, name):
+            attr = getattr(self, name)
+            return attr
+
+    def set_urls_flag(self, url_type):
+        """
+        设置各自url的标志位
+        :param url_type: url的分类
+        :return:
+        """
+        name = 'flag_' + url_type
+        setattr(self, name, False)
+
+    def get_random_time(self):
+        """
+        取一个0-0.5之间的随机小数数
+        :return:
+        """
+        timer = random.randint(0, 50)
+        timer /= 100
+        timer = round(timer, 2)
+        return timer
+
     def get_args(self):
         """
         返回一个搜索关键词
         :return:
         """
+        # 乱序
+        random.shuffle(self.search_args)
         count = len(self.search_args)
         i = random.randint(0, count)
         args = self.search_args.pop(i)
@@ -314,7 +345,7 @@ class BaseCrawl(RequestHeader):
                  'shengzhou', 'xinchang', 'jiangshanshi', 'pingyangxian', 'hk', 'am', 'tw', 'quanguo', 'cn',
                  'gllosangeles', 'glsanfrancisco', 'glnewyork', 'gltoronto', 'glvancouver', 'glgreaterlondon',
                  'glmoscow', 'glseoul', 'gltokyo', 'glsingapore', 'glbangkok', 'glchiangmai', 'gldubai', 'glauckland',
-                 'glsydney', 'glmelbourne', 'city']
+                 'glsydney', 'glmelbourne']
         return codes
 
     def get_chinahr_city_code(self):
@@ -509,8 +540,13 @@ class BaseCrawl(RequestHeader):
         """
         urls = []
         for item in REQEUST_URLS:
+            self.set_urls_flag(item['type'])
             item['type'] = 'parser_' + item['type']
+            # print(self.get_urls_flag(item['type']))
             urls.append(item)
+
+        # 乱序
+        random.shuffle(urls)
         return urls
 
     def get_already_crawl_site(self):
@@ -624,7 +660,6 @@ class BaseCrawl(RequestHeader):
             print('全部url已请求爬取完毕')
             CRAWL_LOG.info('all target urls request finished')
         else:
-            CRAWL_LOG.info('to request target urls')
             # 索引字段
             index = args
             if not args_urlencode:
@@ -716,7 +751,6 @@ class BaseCrawl(RequestHeader):
             invalid_target_urls.update(end_url)
 
         # print('invalid_target_urls', invalid_target_urls)
-        print('删除无效的url')
         return invalid_target_urls
 
     def generate_reqeust_target_urls(self, url, url_name, proxy, city_code, args, args_urlencode, index,
@@ -734,7 +768,7 @@ class BaseCrawl(RequestHeader):
         :param page: 页码
         :return: 返回所有的待爬取的目标url
         """
-
+        url_nick_name = url_name.split('_')[1]
         # 最后的目标url
         if is_generate:
             target_urls = set()
@@ -744,12 +778,10 @@ class BaseCrawl(RequestHeader):
             page = 1
         # for i in range(1, 2):  # 作测试使用
         for i in range(page, END_PAGE):  # 页码总数随意，但一般情况下每个网站搜出来的职位最多就100页左右
+            flag = self.get_urls_flag(url_name)
             # 当标志位为真，即标志该站某一页已经没有数据，该网站停止爬取，终止循环
-            if self.flag:
-                # 为其他网站的url设置初始值
-                self.flag = False
-                print('网站 %s 已无 %s 相关数据，已切换到其他网站继续爬取.....' % (url_name, index))
-
+            if flag:
+                print('网站 %s 已无 %s 相关数据，已切换到其他网站继续爬取.....' % (url_nick_name, index))
                 # 删除对应的无效url
                 invalid_url = self.generate_reqeust_invalid_urls(url, city_code, url_name, args, args_urlencode, page)
                 if invalid_url:
@@ -757,19 +789,22 @@ class BaseCrawl(RequestHeader):
                     self.target_urls -= self.invalid_urls
                     target_urls = self.target_urls
                     # 覆盖存储
-                    cover_url_redis(self.target_urls)
+                    cover_url_redis(target_urls)
                 break
-
             temp_urls = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, target_urls)
             target_urls.update(temp_urls)
 
             # 请求
             if not is_generate:
                 try:
+                    # 获取最新待爬取的url
+                    if self.invalid_urls:
+                        self.target_urls -= self.invalid_urls
+                        target_urls = self.target_urls
                     self.request_format_site(target_urls, url_name, proxy, args_urlencode, i, index, city_code)
                     save_market_page_redis(i)  # 保存已爬取的页码
                 except BaseException as e:
-                    print(e)
+                    # print(e)
                     CRAWL_LOG.error('request exception occurred:%s' % e)
                     save_redis(self.jobs)
 
@@ -899,15 +934,13 @@ class BaseCrawl(RequestHeader):
         :return:
         """
         # 遍历请求
-        # print(target_urls)
         # 获取最新待爬取的url
         for target_url in target_urls:
             try:
                 self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index, city_code)
-
             except BaseException as e:
-                CRAWL_LOG.error('request exception occurred:%s' % e)
                 time.sleep(2)
+                gevent.sleep(2)
                 proxy = None
                 if self.proxy_list:
                     if proxy in self.proxy_list:
@@ -917,7 +950,7 @@ class BaseCrawl(RequestHeader):
                     self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index, city_code)
 
                 except BaseException as e:
-                    print(e)
+                    # print(e)
                     save_redis(self.jobs)
                     CRAWL_LOG.error('request exception occurred:%s' % e)
 
@@ -1128,6 +1161,7 @@ class BaseCrawl(RequestHeader):
             return result
         except BaseException:
             time.sleep(3)
+            gevent.sleep(3)
             try:
                 result = self.second_requetst_parser_body(link, url_name, *args, **kwargs)
                 return result
@@ -1230,7 +1264,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_kanzhun(self, html, link=None, *args, **kwargs):
         """
@@ -1310,7 +1345,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_boss(self, html, link=None, *args, **kwargs):
         """
@@ -1399,7 +1435,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_51job(self, html, link=None, *args, **kwargs):
         """
@@ -1517,7 +1554,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_zhilian(self, html, link=None, *args, **kwargs):
         """
@@ -1595,7 +1633,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_zhuopin(self, html, link=None, *args, **kwargs):
         """
@@ -1690,7 +1729,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_lagou(self, html, link=None, *args, **kwargs):
         """
@@ -1774,7 +1814,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_dajie(self, html, link=None, *args, **kwargs):
         """
@@ -1880,7 +1921,8 @@ class BaseCrawl(RequestHeader):
 
                 else:
                     # 如果为空，将标志位置为真
-                    self.flag = True
+                    flag_name = 'flag_' + url_name.split('_')[1]
+                    setattr(self, flag_name, True)
 
     def second_parser_zhitong(self, html, link=None, *args, **kwargs):
         """
@@ -1960,7 +2002,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_cjol(self, html, link=None, *args, **kwargs):
         """
@@ -2066,7 +2109,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_yjs(self, html, link=None, *args, **kwargs):
         """
@@ -2182,7 +2226,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_jobcn(self, html, link=None, *args, **kwargs):
         """
@@ -2252,7 +2297,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_jiaoshizhaopin(self, html, link=None, *args, **kwargs):
         """
@@ -2361,7 +2407,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_baixing(self, html, link=None, *args, **kwargs):
         """
@@ -2488,7 +2535,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_shuobo(self, html, link=None, *args, **kwargs):
         """
@@ -2587,7 +2635,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_liepin(self, html, link=None, *args, **kwargs):
         """
@@ -2705,7 +2754,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_ganji(self, html, link=None, *args, **kwargs):
         """
@@ -2824,7 +2874,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_ganji_it(self, html, link=None, *args, **kwargs):
         """
@@ -2915,7 +2966,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_58(self, html, link=None, *args, **kwargs):
         """
@@ -2990,8 +3042,7 @@ class BaseCrawl(RequestHeader):
                 job_type = item.xpath('./ul[@class="l2"]/li[@class="job-address"]/span/text()')[0].replace('|',
                                                                                                            '').strip()
                 company_name = item.xpath('./ul[@class="l2"]/li[@class="job-company"]/text()')[0].strip()
-                job_tags = item.xpath('./ul[@class="l4"]/li[@class="job-fuli"]div/span/text()')
-                number_recruits, job_brief, job_addr, company_brief, company_type, company_scale, job_evaluate = self.second_request_parser(
+                number_recruits, job_brief, job_addr, job_tags, company_brief, company_type, company_scale, job_evaluate = self.second_request_parser(
                     link, url_name)
                 company_comment = []
                 comment_url = 'https://chinahr.58.com/enterprise/name/%s/comment?version=1.0' % urllib.parse.quote(
@@ -3032,7 +3083,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_chinahr(self, html, link=None, *args, **kwargs):
         """
@@ -3058,9 +3110,11 @@ class BaseCrawl(RequestHeader):
         job_brief = etree_html.xpath('//div[@class="desc_text"]/text()')
         company_brief = etree_html.xpath('//div[@class="details_text"]/text()')
         job_evaluate = etree_html.xpath('//span[@class="title-score-number"]/text()')
+        job_tags = etree_html.xpath('//div[@class="job_item_2"]//span/text()')
+        job_tags = job_tags if job_tags else ''
         if job_evaluate:
             job_evaluate = ''.join(job_evaluate)
-        return number_recruits, job_brief, job_addr, company_brief, company_type, company_scale, job_evaluate
+        return number_recruits, job_brief, job_addr, job_tags, company_brief, company_type, company_scale, job_evaluate
 
     def parser_chinahr_old(self, html, url_name, url=None, *args, **kwargs):
         """
@@ -3126,7 +3180,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_chinahr_old(self, html, link=None, *args, **kwargs):
         """
@@ -3200,7 +3255,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_job1001(self, html, link=None, *args, **kwargs):
         """
@@ -3316,7 +3372,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_linkin(self, html, link=None, *args, **kwargs):
         """
@@ -3391,7 +3448,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_doumi(self, html, link=None, *args, **kwargs):
         """
@@ -3501,7 +3559,8 @@ class BaseCrawl(RequestHeader):
 
             else:
                 # 如果为空，将标志位置为真
-                self.flag = True
+                flag_name = 'flag_' + url_name.split('_')[1]
+                setattr(self, flag_name, True)
 
     def second_parser_gongzuochong(self, html, link=None, *args, **kwargs):
         """
@@ -3588,7 +3647,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_ofweek(self, html, link=None, *args, **kwargs):
         """
@@ -3665,7 +3725,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_telecomhr(self, html, link=None, *args, **kwargs):
         """
@@ -3769,7 +3830,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_tndbjob(self, html, link=None, *args, **kwargs):
         """
@@ -3947,7 +4009,8 @@ class BaseCrawl(RequestHeader):
 
             else:
                 # 如果为空，将标志位置为真
-                self.flag = True
+                flag_name = 'flag_' + url_name.split('_')[1]
+                setattr(self, flag_name, True)
 
     def second_parser_baidu(self, html, link=None, *args, **kwargs):
         """
@@ -4051,7 +4114,8 @@ class BaseCrawl(RequestHeader):
 
             else:
                 # 如果为空，将标志位置为真
-                self.flag = True
+                flag_name = 'flag_' + url_name.split('_')[1]
+                setattr(self, flag_name, True)
 
     def second_parser_baidu_jianzhi(self, html, link=None, *args, **kwargs):
         """
@@ -4118,7 +4182,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_jiaoshi(self, html, link=None, *args, **kwargs):
         """
@@ -4177,7 +4242,8 @@ class BaseCrawl(RequestHeader):
 
         else:
             # 如果为空，将标志位置为真
-            self.flag = True
+            flag_name = 'flag_' + url_name.split('_')[1]
+            setattr(self, flag_name, True)
 
     def second_parser_xxx(self, html, link=None, *args, **kwargs):
         """
@@ -4193,12 +4259,12 @@ class BaseCrawl(RequestHeader):
     def run(self):
         try:
             sched = self.get_scheduler()
-            sched.add_job(save_redis, 'interval', seconds=INTERVAL, args=[self.jobs])
+            sched.add_job(save_redis, 'interval', seconds=INTERVAL, args=[self.jobs], max_instances=5)
             sched.start()
             self.request_site()
         except KeyboardInterrupt as e:
             # 如果中断程序，把已获取到的数据先保存
-            print(e)
+            # print(e)
             save_redis(self.jobs)
             CRAWL_LOG.error('entered keyboard ctrl + c')
             sys.exit()
@@ -4225,7 +4291,8 @@ class GeventCrawl(BaseCrawl):
             #     args = self.get_args()
             for args in self.search_args:
                 proxy = self.get_proxy()
-                gevent.sleep(0.2)
+                timer = self.get_random_time()
+                gevent.sleep(timer)
                 args_urlencode = urllib.parse.quote(args)
                 task = gevent_pool.spawn(self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
@@ -4253,7 +4320,8 @@ class GeventCrawl(BaseCrawl):
         gevent_pool = Pool(GEVENT_POOL + 10)
         try:
             for target_url in target_urls:
-                gevent.sleep(0.2)
+                timer = self.get_random_time()
+                gevent.sleep(timer)
                 task = gevent_pool.spawn(self.request_format_url, target_url, url_name, proxy, args_urlencode, i, index,
                                          city_code)
                 tasks.append(task)
@@ -4261,7 +4329,7 @@ class GeventCrawl(BaseCrawl):
             if done:
                 gevent.killall(tasks)
         except BaseException as e:
-            print(e)
+            # print(e)
             CRAWL_LOG.error('request exception occurred:%s' % e)
 
     def get_scheduler(self):
@@ -4291,7 +4359,8 @@ class ThreadPoolCrawl(BaseCrawl):
             for args in self.search_args:
                 proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
-                time.sleep(0.2)
+                timer = self.get_random_time()
+                time.sleep(timer)
                 task = thread.submit(self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
         wait(tasks)
@@ -4318,10 +4387,11 @@ class ThreadPoolCrawl(BaseCrawl):
             for url in target_urls:
                 task = thread.submit(self.request_format_url, url, url_name, proxy, args_urlencode, i, index, city_code)
                 tasks.append(task)
-                time.sleep(0.2)
+                timer = self.get_random_time()
+                time.sleep(timer)
             wait(tasks)
         except BaseException as e:
-            print(e)
+            # print(e)
             CRAWL_LOG.error('request exception occurred:%s' % e)
 
     def get_scheduler(self):
@@ -4351,7 +4421,8 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
             for args in self.search_args:
                 proxy = self.get_proxy()
                 args_urlencode = urllib.parse.quote(args)
-                time.sleep(0.2)
+                timer = self.get_random_time()
+                time.sleep(timer)
                 task = loop.run_in_executor(thread, self.request_url, url, url_name, proxy, args_urlencode, args)
                 tasks.append(task)
         loop.run_until_complete(asyncio.wait(tasks))
@@ -4411,10 +4482,13 @@ def save_redis(jobs, key=None):
         cont = conn.get(key)
         if cont:
             cont = eval(cont)
-            jobs.extend(cont)
-        jobs = duplicate_removal(jobs)
-        print('数据库内已存有 %s 个职位信息' % len(jobs))
-        conn.set(key, str(jobs))
+            if cont != jobs:
+                jobs.extend(cont)
+                jobs = duplicate_removal(jobs)
+                print('数据库内已存有 %s 个职位信息' % len(jobs))
+                conn.set(key, str(jobs))
+            else:
+                pass
 
 
 def save_url_redis(se, key=None):
@@ -4529,7 +4603,7 @@ def main(cls=None):
     crawl = cls()
     crawl.proxy_list = proxies  # 测试时防止代理报错影响结果可以先注释掉
 
-    crawl.target_urls = target_urls  # 测试时防止代理报错影响结果可以先注释掉
+    crawl.target_urls = target_urls
     result = crawl.run()
     save_redis(result)  # 存入redis数据库
     # print(result)
