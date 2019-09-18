@@ -169,7 +169,7 @@
 
 ![启动运行](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_1.png)
 ![运行中](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_2.png)
-![运行完毕](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_4.png)
+![运行完毕](https://raw.githubusercontent.com/Eeyhan/pictures/master/jobs_4.png)
 ![redis数据库结果](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_3.png)
 
 
