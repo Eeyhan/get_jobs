@@ -9,6 +9,8 @@ from gevent.pool import Pool
 
 monkey.patch_all()
 import requests
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 import urllib.parse
 from lxml import etree
 import random
@@ -119,6 +121,7 @@ class BaseCrawl(RequestHeader):
         self.request_urls = self.get_request_urls
         self.proxy_list = None
         self.target_urls = None
+        self.target_urls_dict = dict()
         self.invalid_urls = set()
         self.jobs = []
         self.search_args = SEARCH_ARGS
@@ -493,6 +496,11 @@ class BaseCrawl(RequestHeader):
         :return:
         """
         session = requests.session()
+        retry = Retry(connect=5, backoff_factor=1)
+        adapter = HTTPAdapter(max_retries=retry)
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        session.keep_alive = False
         if not url:
             if 'parser_baidu' == url_name:
                 session.get(self.BAIDU_COOKIE_URL, headers=self.header, timeout=(3, 7))
@@ -511,15 +519,33 @@ class BaseCrawl(RequestHeader):
         """
         if token_url:
             session = self.get_session(url_name)
-            req = session.get(token_url, headers=self.header, timeout=(3, 7))
-            res = req.content.decode('utf-8')
-            session.close()
-            if 'parser_baidu' == url_name:
-                token = re.findall(r'"nekot"] = "(.*)";', res)[0][::-1]
-            elif 'parser_baidu_jianzhi' == url_name:
-                token = re.findall(r"zp_pc_nekot = '(.*)';", res)[0][::-1]
-            else:
-                token = ''
+            token = ''
+            res = ''
+            try:
+                proxy = self.get_proxy()
+                req = session.get(token_url, headers=self.header, proxies=proxy, verify=False, timeout=(3, 7))
+                res = req.content.decode('utf-8')
+                session.keep_alive = False
+                session.close()
+            except BaseException as e:
+                time.sleep(3)
+                gevent.sleep(3)
+                try:
+                    proxy = self.get_proxy()
+                    req = session.get(token_url, headers=self.header, proxies=proxy, verify=False, timeout=(3, 7))
+                    res = req.content.decode('utf-8')
+                    session.keep_alive = False
+                    session.close()
+                except BaseException as e:
+                    print('触发百度反爬侦测')
+                    CRAWL_LOG.error('Hit by Baidu anti-crawl policy')
+            if res:
+                if 'parser_baidu' == url_name:
+                    token = re.findall(r'"nekot"] = "(.*)";', res)
+                    token = token[0][::-1] if token else ''
+                elif 'parser_baidu_jianzhi' == url_name:
+                    token = re.findall(r"zp_pc_nekot = '(.*)';", res)
+                    token = token[0][::-1] if token else ''
             if token:
                 new_token = urllib.parse.quote(token)
                 return new_token
@@ -542,9 +568,7 @@ class BaseCrawl(RequestHeader):
         for item in REQEUST_URLS:
             self.set_urls_flag(item['type'])
             item['type'] = 'parser_' + item['type']
-            # print(self.get_urls_flag(item['type']))
             urls.append(item)
-
         # 乱序
         random.shuffle(urls)
         return urls
@@ -559,7 +583,6 @@ class BaseCrawl(RequestHeader):
             temp_url = item.get('url').split('/')
             url = temp_url[2].split('.', 1)[1]
             sites.append(url)
-
         return sites
 
     def request_site(self):
@@ -567,19 +590,14 @@ class BaseCrawl(RequestHeader):
         遍历请求所有的url
         :return:
         """
-
-        for urls in self.request_urls:
-            url = urls.get('url')
-            url_name = urls.get('type')
-            domain = url_name.split('_', 1)[1]
-            print('正在爬取 %s 网站的数据' % domain)
-            # args = urls.get('args')
-            # if not args:
-            #     args = self.get_args()
-            for args in self.search_args:
-                proxy = self.get_proxy()
-                args_urlencode = urllib.parse.quote(args)
-                self.request_url(url, url_name, proxy, args_urlencode, args)
+        for args in self.search_args:
+            args_urlencode = urllib.parse.quote(args)
+            for urls in self.request_urls:
+                url = urls.get('url')
+                url_name = urls.get('type')
+                domain = url_name.split('_', 1)[1]
+                print('正在爬取 %s 网站的 %s 相关岗位的数据' % (domain, args))
+                self.request_url(url, url_name, args_urlencode, args)
 
     def get_cookie(self, url, url_name=None, args=None):
         """
@@ -611,6 +629,8 @@ class BaseCrawl(RequestHeader):
             })
             req.get(url, headers=headers, timeout=(3, 7))
         cookie = req.cookies
+        req.keep_alive = False
+        req.close()
         return cookie
 
     def get_city_codes(self, url_name):
@@ -619,116 +639,113 @@ class BaseCrawl(RequestHeader):
         :param url_name: url别名
         :return:
         """
-        if 'zhilian' in url_name:
-            city_codes = self.get_zhilian_city_code()
-        elif 'parser_ganji' == url_name:
-            city_codes = self.ganji_city_codes()
-        elif 'parser_ganji_it' == url_name:
-            city_codes = self.ganji_city_codes()
-        elif '58' in url_name:
-            city_codes = self.get_58_city_code()
-        elif 'parser_chinahr' == url_name:
-            city_codes = self.get_chinahr_city_code()
-        elif 'gongzuochong' in url_name:
-            city_codes = self.get_gzc_city_code()
-        elif 'baidu' in url_name:
-            city_codes = self.get_baidu_city_code()
-        elif 'doumi' in url_name:
-            city_codes = self.get_doumi_city_codes()
-        else:
+        city_dict = {
+            'parser_zhilian': self.get_zhilian_city_code,
+            'parser_ganji': self.ganji_city_codes,
+            'parser_ganji_it': self.ganji_city_codes,
+            'parser_58': self.get_58_city_code,
+            'parser_chinahr': self.get_chinahr_city_code,
+            'parser_gongzuochong': self.get_gzc_city_code,
+            'parser_baidu': self.get_baidu_city_code,
+            'parser_baidu_jianzhi': self.get_baidu_city_code,
+            'parser_doumi': self.get_doumi_city_codes,
+        }
+        func = city_dict.get(url_name)
+        if not func:
             city_codes = []
+        else:
+            city_codes = func()
         return city_codes
 
     def get_scheduler(self):
         cls = BlockingScheduler
         return cls()
 
-    def request_url(self, url, url_name, proxy=None, args_urlencode=None, args=None):
+    def request_url(self, url, url_name, args_urlencode=None, args=None):
         """
         请求对应的网址
-        :param url: url
-        :param url_name: url别名
-        :param proxy: 代理
+        :param url:url
+        :param url_name:url别名
         :param args_urlencode: 已编码的搜索职位名参数
         :param args: 未编码的搜索职位名参数
         :return:
         """
 
-        market_urls = get_url_redis('market_urls')  # 已爬取的url
-        db_target_urls = get_url_redis()  # 所有的url
-        if market_urls and db_target_urls and market_urls == db_target_urls:
-            print('全部url已请求爬取完毕')
-            CRAWL_LOG.info('all target urls request finished')
+        # 索引字段
+        index = args
+        if not args_urlencode:
+            args_urlencode = urllib.parse.quote('python')
+        # 获取城市代码
+        city_codes = self.get_city_codes(url_name)
+        # 如果有城市代码
+        if city_codes:
+            for city_code in city_codes:
+                self.enumerate_request_urls(url, url_name, args, args_urlencode, index, city_code)
         else:
-            # 索引字段
-            index = args
-            if not args_urlencode:
-                args_urlencode = urllib.parse.quote('python')
+            self.enumerate_request_urls(url, url_name, args, args_urlencode, index)
 
-            # 获取城市代码
-            city_codes = self.get_city_codes(url_name)
-
-            # 如果有城市代码
-            if city_codes:
-                for city_code in city_codes:
-                    self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index, city_code)
-            else:
-                self.enumerate_request_urls(url, url_name, args, args_urlencode, proxy, index)
-
-    def enumerate_request_urls(self, url, url_name, args, args_urlencode, proxy, index, city_code=None):
+    def enumerate_request_urls(self, url, url_name, args, args_urlencode, index, city_code=None):
         """
         枚举所有的url
         :param url: 待请求为格式化的url
         :param url_name: url的别名
         :param args: 搜索关键词
         :param args_urlencode: 已编码的搜索关键词
-        :param proxy: 代理
         :param index: 索引
         :param city_code: 城市代码，如果为空则表示为全国地区
         :return:
         """
-
         # 如果数据库内无值，生成值并存入数据库(第一次运行程序)
         if not self.target_urls:
-
             # 生成所有的目标url
-            target_urls = self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args, args_urlencode,
-                                                            index, is_generate=True)
+            target_urls, target_urls_dict = self.generate_reqeust_target_urls(url, url_name, city_code, args,
+                                                                              args_urlencode, index, is_generate=True)
 
             # 保存所有的目标url，这里如果是协程或者多线程，可能会导致页码和真实情况有少量偏移，正常现象
             if target_urls:
                 self.target_urls = target_urls
+                self.target_urls_dict = target_urls_dict
                 save_url_redis(target_urls)
-
-            # 开始遍历请求
-            self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args, args_urlencode,
-                                              index)
+                # 开始遍历请求
+                self.generate_reqeust_target_urls(url, url_name, city_code, args, args_urlencode, index)
 
         # 如果数据库有值(第二次及之后的运行程序)
         else:
             # 生成所有的目标url
-            db_target_urls = get_url_redis()
-            page = get_market_page_redis()  # 已爬取的页码
-            generate_target_urls = self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args,
-                                                                     args_urlencode, index, is_generate=True)
-            # 如果上一次爬取时没有生成完成所有的url
-            if db_target_urls != generate_target_urls:
-                db_target_urls = generate_target_urls
-
-            market_urls = get_url_redis('market_urls')  # 已爬取的url
-            if market_urls == db_target_urls:
-                print('全部url已爬取完毕')
-            else:
+            self.target_urls = get_url_redis()
+            target_urls, self.target_urls_dict = self.generate_reqeust_target_urls(url, url_name, city_code, args,
+                                                                                   args_urlencode, index,
+                                                                                   is_generate=True)
+            market_urls = get_url_redis('market_urls')
+            invalid_urls = get_url_redis('invalid_urls')
+            # 去掉无效的url
+            if invalid_urls:
+                self.target_urls -= invalid_urls
                 if market_urls:
-                    target_urls = db_target_urls - market_urls  # 未爬取的url
-                else:
-                    target_urls = db_target_urls
-                self.target_urls = target_urls
-                save_url_redis(target_urls)  # 重新保存所有的目标url
-
-                # 开始遍历请求
-                self.generate_reqeust_target_urls(url, url_name, proxy, city_code, args, args_urlencode, index,
-                                                  page=page)
+                    market_urls -= invalid_urls
+            else:
+                invalid_urls = set()
+            # 比对数据
+            temp_compare_url = self.target_urls
+            if market_urls:
+                if market_urls == self.target_urls:
+                    print('全部url已爬取完毕')
+                    CRAWL_LOG.info('all target urls request finished')
+                    return
+                else:  # 未爬取完毕(断点续爬)
+                    # 如果有已爬取过的url,加上已爬取和无效的url再和新生成的所有目标url对比,不等则重新赋值
+                    temp_compare_url.update(market_urls, invalid_urls)
+                    if target_urls != temp_compare_url:  # 数据库内的目标url不完整(上次启动意外终止;有新增的网站)
+                        self.target_urls = target_urls - invalid_urls
+                    self.target_urls -= market_urls
+            else:  # 如果无已爬取过的url,加上无效的url和新生成的所有url对比,不等则重新赋值
+                temp_compare_url.update(invalid_urls)
+                if temp_compare_url != target_urls:  # 数据库内的目标url不完整(上次启动意外终止;有新增的网站)
+                    self.target_urls = target_urls - invalid_urls
+            self.flush_target_urls_dict()
+            save_url_redis(self.target_urls)
+            # 开始遍历请求
+            self.generate_reqeust_target_urls(url, url_name, city_code, args, args_urlencode, index)
 
     def generate_reqeust_invalid_urls(self, url, city_code, url_name, args, args_urlencode, page=None):
         """
@@ -741,77 +758,81 @@ class BaseCrawl(RequestHeader):
         :param page: 页码
         :return:
         """
-
         invalid_target_urls = set()
         if not page:
             page = 1
-
         for i in range(page, END_PAGE):
-            end_url = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, set())
+            end_url, end_url_dict = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, set(),
+                                                         dict())
             invalid_target_urls.update(end_url)
-
-        # print('invalid_target_urls', invalid_target_urls)
         return invalid_target_urls
 
-    def generate_reqeust_target_urls(self, url, url_name, proxy, city_code, args, args_urlencode, index,
-                                     is_generate=False, page=None):
+    def generate_reqeust_target_urls(self, url, url_name, city_code, args, args_urlencode, index, is_generate=False):
         """
         生成所有的url和遍历请求
         :param url: 待爬取的url
         :param url_name: url的别名
-        :param proxy: 代理
         :param city_code: 城市代码
         :param args: 关键词
         :param args_urlencode: 已url编码好的关键词
         :param index: 索引
         :param is_generate: 是否是生成所有的目标url
-        :param page: 页码
         :return: 返回所有的待爬取的目标url
         """
-        url_nick_name = url_name.split('_')[1]
-        # 最后的目标url
+        db_page = get_market_page_redis()
+        page = db_page if db_page else 1
+        # 生成目标url
         if is_generate:
             target_urls = set()
-        else:
-            target_urls = self.target_urls
-        if not page:
-            page = 1
-        # for i in range(1, 2):  # 作测试使用
-        for i in range(page, END_PAGE):  # 页码总数随意，但一般情况下每个网站搜出来的职位最多就100页左右
-            flag = self.get_urls_flag(url_name)
-            # 当标志位为真，即标志该站某一页已经没有数据，该网站停止爬取，终止循环
-            if flag:
-                print('网站 %s 已无 %s 相关数据，已切换到其他网站继续爬取.....' % (url_nick_name, index))
-                # 删除对应的无效url
-                invalid_url = self.generate_reqeust_invalid_urls(url, city_code, url_name, args, args_urlencode, page)
-                if invalid_url:
-                    self.invalid_urls.update(invalid_url)
-                    self.target_urls -= self.invalid_urls
-                    target_urls = self.target_urls
-                    # 覆盖存储
-                    cover_url_redis(target_urls)
-                break
-            temp_urls = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, target_urls)
-            target_urls.update(temp_urls)
+            target_urls_dict = dict()
+            for i in range(page, END_PAGE):  # 页码总数随意，但一般情况下每个网站搜出来的职位最多就100页左右
+                # 生成
+                temp_urls, temp_urls_dict = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i,
+                                                                 set(), dict())
+                target_urls.update(temp_urls)
+                target_urls_dict.update(temp_urls_dict)
+            return target_urls, target_urls_dict
+        # 请求目标url
+        # target_urls_dict生成的是不同网站的url,因为url不固定，所以是{url:url_name}的格式
+        elif self.target_urls_dict:
+            self.request_format_site(url_name, args, args_urlencode, index, page=page)
 
-            # 请求
-            if not is_generate:
-                try:
-                    # 获取最新待爬取的url
-                    if self.invalid_urls:
-                        self.target_urls -= self.invalid_urls
-                        target_urls = self.target_urls
-                    self.request_format_site(target_urls, url_name, proxy, args_urlencode, i, index, city_code)
-                    save_market_page_redis(i)  # 保存已爬取的页码
-                except BaseException as e:
-                    # print(e)
-                    CRAWL_LOG.error('request exception occurred:%s' % e)
-                    save_redis(self.jobs)
+    def request_format_site(self, url_name, args, args_urlencode, index, page=None):
+        """
+        分发请求url
+        :param url_name: url别名
+        :param page: 页码
+        :param args: 搜索关键词
+        :param args_urlencode: 已作url编码的搜索关键词
+        :param index: 索引
+        :param city_code: 城市代码
+        :return:
+        """
+        for current_url in list(self.target_urls_dict):
+            # 获取最新待爬取的url
+            if self.invalid_urls:
+                self.target_urls -= self.invalid_urls
+                self.flush_target_urls_dict()
+            url_name = self.target_urls_dict.get(current_url)
+            if url_name:
+                city_codes = self.get_city_codes(url_name)  # url_name 改变，city_code也要跟着改变
+                if city_codes:
+                    for city_code in city_codes:
+                        self.distribute_request_url(current_url, url_name, args, args_urlencode, index, page, city_code)
+                else:
+                    self.distribute_request_url(current_url, url_name, args, args_urlencode, index, page)
 
-        if is_generate:
-            return target_urls
+    def flush_target_urls_dict(self):
+        """
+        刷新目标url字典
+        :return:
+        """
+        key = list(self.target_urls_dict.keys())
+        for k in key:
+            if k not in self.target_urls:
+                self.target_urls_dict.pop(k)
 
-    def distribute_urls(self, url, url_name, city_code, args, args_urlencode, i, target_urls):
+    def distribute_urls(self, url, url_name, city_code, args, args_urlencode, i, target_urls, target_urls_dict):
         """
         分发生成url
         :param url: url
@@ -820,46 +841,36 @@ class BaseCrawl(RequestHeader):
         :param args: 搜索关键词
         :param args_urlencode: 已url编码的搜索关键词
         :param i: 页码
-        :param target_urls: 目标url
+        :param target_urls: 目标url集合
+        :param target_urls_dict: 目标url字典
         :return:
         """
+        temp_url = ''
         if 'zhilian' in url_name:
             i *= 90
             temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'parser_ganji' == url_name:
             ganji_args = self.get_ganji_search_args()
             if args in ganji_args:
                 args_value = ganji_args.get(args)
                 temp_url = url.format(c=city_code, p=i, q=args_value)
-                target_urls.add(temp_url)
-
         elif 'parser_ganji_it' == url_name:
             i = (i - 1) * 32
             temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif '58' in url_name:
             temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'parser_chinahr' == url_name:
             temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'gongzuochong' in url_name:
             temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'baidu' in url_name:
             city_code1 = urllib.parse.quote(city_code)
             city_code2 = urllib.parse.quote(city_code1)
+
             if 'parser_baidu' == url_name:
                 # 百度百聘的api把城市参数做了两层url编码
                 token_url = 'https://zhaopin.baidu.com/quanzhi?city={c}&query={q}'.format(c=city_code1,
                                                                                           q=args_urlencode)
-
             elif 'parser_baidu_jianzhi' == url_name:
                 # 百度百聘的api把城市参数做了两层url编码
                 token_url = 'https://zhaopin.baidu.com/jianzhi?city={c}&query={q}'.format(c=city_code1,
@@ -867,42 +878,30 @@ class BaseCrawl(RequestHeader):
             else:
                 token_url = ''
             token = self.get_baidu_token(token_url, url_name)
-            if i == 1:
-                i -= 1
-            i *= 20
-            temp_url = url.format(c=city_code2, p=i, q=args_urlencode, token=token)
-            target_urls.add(temp_url)
-
+            if token:
+                if i == 1:
+                    i -= 1
+                i *= 20
+                temp_url = url.format(c=city_code2, p=i, q=args_urlencode, token=token)
         elif 'yjs' in url_name:
             i -= 1
             if i < 0:
                 i = 0
             i *= 10
             temp_url = url.format(p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'jobcn' in url_name:
-            target_urls.add(url)
-
+            temp_url = url
         elif 'parser_jiaoshizhaopin' == url_name:
             args = urllib.parse.quote(args, encoding='gb2312')
             temp_url = url.format(p=i, q=args)
-            target_urls.add(temp_url)
-
         elif 'shuobo' in url_name and i == 1:
             temp_url = 'http://www.51shuobo.com/s/result/kt1_kw-{q}/'.format(q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'liepin' in url_name:
             i -= 1
             temp_url = url.format(p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'job1001' in url_name:
             i -= 1
             temp_url = url.format(p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'linkin' in url_name:
             city = '中国'
             c = urllib.parse.quote(city)
@@ -910,51 +909,71 @@ class BaseCrawl(RequestHeader):
                 i = 0
             i *= 25
             temp_url = url.format(c=c, p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-
         elif 'telecomhr' in url_name:
             args = urllib.parse.quote(args, encoding='gb2312')
             temp_url = url.format(p=i, q=args)
-            target_urls.add(temp_url)
         else:
             temp_url = url.format(p=i, q=args_urlencode)
-            target_urls.add(temp_url)
-        return target_urls
+        if temp_url:
+            target_urls.add(temp_url)  # 不能用update
+            target_urls_dict.update({temp_url: url_name})
+            return target_urls, target_urls_dict
+        else:
+            return '', ''
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
+    def distribute_request_url(self, target_url, url_name, args, args_urlencode, index, page, city_code=None):
         """
         请求格式化好的所有url
-        :param target_urls: 所有目标url,类型为集合
+        :param target_url: 目标url
         :param url_name: url别名
         :param proxy: 代理
+        :param args: 搜索关键词
         :param args_urlencode: url编码后后的搜索关键词
-        :param i: 页码
         :param index: 搜索关键词
+        :param page: 已爬取的页码
         :param city_code: 城市代码
         :return:
         """
-        # 遍历请求
-        # 获取最新待爬取的url
-        for target_url in target_urls:
+        proxy = None
+        domain = url_name.split('_')[1]
+        for i in range(page, END_PAGE):  # 页码总数随意，但一般情况下每个网站搜出来的职位最多就100页左右
+            # 当标志位为真，即标志该站某一页已经没有数据，该网站停止爬取，终止循环
+            print('正在爬取网站 %s 的 %s 岗位的 第 %s 页数据' % (domain, args, i))
+            flag = self.get_urls_flag(url_name)
+            if flag:
+                print('该链接下已无 %s 相关数据，已切换到其他url继续爬取.....' % index)
+                # 删除对应的无效url
+                invalid_url = self.generate_reqeust_invalid_urls(target_url, city_code, url_name, args,
+                                                                 args_urlencode, page)
+                if invalid_url:
+                    self.invalid_urls.update(invalid_url)
+                    self.target_urls -= self.invalid_urls
+                    target_urls = self.target_urls
+                    save_url_redis(self.invalid_urls, 'invalid_urls')
+                    cover_url_redis(target_urls)  # 覆盖存储
+                break
             try:
+                if self.proxy_list:
+                    proxy = self.get_proxy()
+                timer = self.get_random_time()
+                time.sleep(timer)
+                gevent.sleep(timer)
                 self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index, city_code)
             except BaseException as e:
                 time.sleep(2)
                 gevent.sleep(2)
-                proxy = None
                 if self.proxy_list:
                     if proxy in self.proxy_list:
                         self.proxy_list.remove(proxy)
                     proxy = self.get_proxy()
                 try:
                     self.request_format_url(target_url, url_name, proxy, args_urlencode, i, index, city_code)
-
                 except BaseException as e:
-                    # print(e)
                     save_redis(self.jobs)
                     CRAWL_LOG.error('request exception occurred:%s' % e)
+            save_market_page_redis(i)  # 保存已爬取的页码
 
-    def request_format_url(self, url, url_name, proxy, args_urlencode, i, index, city_code):
+    def request_format_url(self, url, url_name, proxy, args_urlencode, i, index, city_code=None):
         """
         请求已经格式化好的url
         :param url: 格式化好的url
@@ -968,7 +987,6 @@ class BaseCrawl(RequestHeader):
         """
         # 中华英才网相关
         chinahr_url = 'http://www.chinahr.com/jobs/'
-
         # 卓聘相关
         zhuopin_data = {
             'CID': '',
@@ -993,10 +1011,8 @@ class BaseCrawl(RequestHeader):
             'pn': i,
             'kd': args_urlencode,
         }
-
         lagou_start_url = 'https://www.lagou.com/jobs/list_{args}?px=default&city=%E5%85%A8%E5%9B%BD'.format(
             args=args_urlencode)
-
         # 大街网相关
         dajie_start_url = 'https://so.dajie.com/job/search?keyword={args}'.format(args=args_urlencode)
 
@@ -1091,17 +1107,16 @@ class BaseCrawl(RequestHeader):
                 doumi_url = self.DOUMI_COOKIE_URL % city_code
                 session = self.get_session(url_name, doumi_url)
                 response = session.get(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False)
-
+                session.keep_alive = False
+                session.close()
             elif 'boss' in url_name:
                 header = self.header
                 header.update(BOSS_COOKIE)
                 response = requests.get(url, headers=header, proxies=proxy, timeout=(3, 7), verify=False)
-
             else:
                 response = requests.get(url, headers=self.header, proxies=proxy, timeout=(3, 7), verify=False)
         except BaseException as e:
             pass
-
         # 解析网站
         if response:
             if response.status_code == 200:
@@ -1116,10 +1131,8 @@ class BaseCrawl(RequestHeader):
         :param response:
         :return:
         """
-
         # code = response.apparent_encoding
         # html = response.content.decode(code)
-
         try:
             html = response.content.decode('utf-8')
         except Exception as s:
@@ -1139,7 +1152,6 @@ class BaseCrawl(RequestHeader):
         :param kwargs:
         :return:
         """
-
         func = getattr(self, url_name)
         if func:
             try:
@@ -1181,10 +1193,10 @@ class BaseCrawl(RequestHeader):
         if 'baidu' in url_name:
             session = self.get_session(url_name)
             response = session.get(url=link, headers=self.header, proxies=proxy, verify=False, timeout=(3, 7))
+            session.keep_alive = False
             session.close()
         else:
             response = requests.get(url=link, headers=self.header, proxies=proxy, verify=False, timeout=(3, 7))
-            response.close()
         result = self.decode_request(response)
         if hasattr(self, url_name):
             func = getattr(self, 'second_' + url_name)
@@ -1230,7 +1242,6 @@ class BaseCrawl(RequestHeader):
             current_salary = self.handler_end_salary(temp_salary)
             format_salary = '￥' + current_salary + 'k' + args
             return format_salary, current_salary
-
         return '', ''
 
     def handler_end_salary(self, salary):
@@ -1261,7 +1272,6 @@ class BaseCrawl(RequestHeader):
                 href = item.xpath('./dl/dd/h3/a/@href')[0]
                 link = 'https://www.kanzhun.com' + href
                 self.second_request_parser(link, url_name, *args, **kwargs)
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -1282,7 +1292,6 @@ class BaseCrawl(RequestHeader):
         job_evaluate_title = ''
         job_title = etree_html.xpath('//div[@class="company_profile"]/div/h1/text()')[0].strip()
         job_area = etree_html.xpath('//div[@class="job"]/p[@class="info"]/a/text()')[0]
-
         job_brief = etree_html.xpath('//div[@class="job-desc_container"]/p[2]/text()')
         company_name = etree_html.xpath('//p[@class="c_name"]/a/text()')[0].split(' ')[0]
         company_type = etree_html.xpath('//div[@class="c_property"]/p/a[1]/text()')[0]
@@ -1290,11 +1299,9 @@ class BaseCrawl(RequestHeader):
         salary = etree_html.xpath('//div[@class="job"]/p[@class="job_salary"]/text()')
         if salary:
             salary, i_salary = self.get_format_salary(salary[0])
-        if job_brief:
-            job_brief = job_brief
+        job_brief = job_brief if job_brief else ''
         company_brief = etree_html.xpath('//div[@class="job-desc_container"]/p[4]/text()')
-        if company_brief:
-            company_brief = company_brief[0].strip()
+        company_brief = company_brief[0].strip() if company_brief else ''
         info = etree_html.xpath('//div[@class="job"]/p[@class="info"]/text()')
         edu = info[3].replace('\n', '')
         ex = info[2].replace('\n', '')
@@ -1302,7 +1309,6 @@ class BaseCrawl(RequestHeader):
         company_comment_title = etree_html.xpath('//*[@id="j-job-review"]/dl/dd/h2/a/text()')
         company_comment_content = etree_html.xpath('//*[@id="j-job-review"]/dl/dd/p[2]/text()')
         company_comment = ''.join(company_comment_title).strip() + ',' + ''.join(company_comment_content).strip()
-
         job_evaluate_title = etree_html.xpath('//*[@id="j-job-interview"]/dl/dd/h2/a/text()')
         job_evaluate_content = etree_html.xpath('//p[@class="c_s_result_text mb15"]/text()')
         job_evaluate = ''.join(job_evaluate_title).strip() + ',' + ''.join(job_evaluate_content).strip()
@@ -1342,7 +1348,6 @@ class BaseCrawl(RequestHeader):
             for item in response:
                 link = 'https://www.zhipin.com' + item.xpath('./div[@class="info-primary"]/h3/a/@href')[0]
                 self.second_request_parser(link, url_name, *args, **kwargs)
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -1360,16 +1365,13 @@ class BaseCrawl(RequestHeader):
         company_status = ''
         job_tags = []
         job_status = etree_html.xpath('//div[@class="job-status"]/text()')
-        if job_status:
-            job_status = job_status[0]
+        job_status = job_status[0] if job_status else ''
         job_title = etree_html.xpath(
             '//div[@class="job-primary detail-box"]/div[@class="info-primary"]/div[@class="name"]/h1/text()')
-        if job_title:
-            job_title = job_title[0]
+        job_title = job_title[0] if job_title else ''
         salary = etree_html.xpath(
             '//div[contains(@class,"job-primary")]/div[@class="info-primary"]/div[@class="name"]/span/text()')
-        if salary:
-            salary = '￥' + salary[0] + '/月'
+        salary = '￥' + salary[0] + '/月' if salary else ''
         info = etree_html.xpath('//div[@class="job-primary detail-box"]/div[@class="info-primary"]/p/text()')
         job_area = info[0]
         ex = info[1]
@@ -1432,7 +1434,6 @@ class BaseCrawl(RequestHeader):
             for item in response:
                 link = item.xpath('./p/span/a/@href')[0]
                 self.second_request_parser(link, url_name, *args, **kwargs)
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -1456,8 +1457,7 @@ class BaseCrawl(RequestHeader):
             salary, i_salary = self.get_format_salary(salary)
         job_tags = etree_html.xpath('//div[@class="t1"]//span/text()')
         job_type = etree_html.xpath('//div[@class="mt10"]/p[1]//a/text()')
-        if job_type:
-            job_type = ','.join(job_type)
+        job_type = ','.join(job_type) if job_type else ''
         company_name = etree_html.xpath('//p[@class="cname"]/a/@title')[0]
         temp_info = etree_html.xpath('//p[@class="msg ltype"]/text()')
         if temp_info:
@@ -1469,8 +1469,7 @@ class BaseCrawl(RequestHeader):
             pub_date = self.get_current_date(temp_pub_date)
         job_brief = etree_html.xpath('//div[contains(@class,"job_msg")]/p/text()')
         job_addr = etree_html.xpath('//div[@class="bmsg inbox"]/p[@class="fp"]/text()')
-        if job_addr:
-            job_addr = ''.join(job_addr).strip()
+        job_addr = ''.join(job_addr).strip() if job_addr else ''
         company_type = etree_html.xpath('//div[@class="com_tag"]/p[1]/@title')[0]
         company_scale = etree_html.xpath('//div[@class="com_tag"]/p[2]/@title')[0] + '/' + \
                         etree_html.xpath('//div[@class="com_tag"]/p[3]/@title')[0]
@@ -1521,6 +1520,9 @@ class BaseCrawl(RequestHeader):
                     job_property = item.get('emplType')
                     edu = item.get('eduLevel').get('name')
                     ex = item.get('workingExp').get('name')
+                    job_property = job_property if job_property else ''
+                    edu = edu if edu else ''
+                    ex = ex if ex else ''
                 company_name = item.get('company').get('name')
                 company_type = item.get('company').get('type').get('name')
                 company_scale = item.get('company').get('size').get('name') + '/' + ''.join(
@@ -1544,14 +1546,12 @@ class BaseCrawl(RequestHeader):
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': job_status, 'job_area': job_area, 'major': '',
                     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '', 'edu': edu,
-                    'ex': ex,
-                    'marriage': '', 'lang': '', 'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link,
-                    'number_recruits': number_recruits, 'job_evaluate': '', 'company_name': company_name,
-                    'company_type': company_type, 'company_status': '', 'phone': '', 'driver_license': '',
-                    'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
-                    'company_comment': ''
+                    'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief, 'job_tags': job_tags,
+                    'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
+                    'company_name': company_name, 'company_type': company_type, 'company_status': '', 'phone': '',
+                    'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief,
+                    'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -1564,19 +1564,15 @@ class BaseCrawl(RequestHeader):
         :param link: 二级网页的url
         :return:
         """
-
         etree_html = etree.HTML(html)
         job_brief = etree_html.xpath('//div[@class="describtion__detail-content"]//text()')
         job_addr = etree_html.xpath('//span[@class="job-address__content-text"]/text()')
-        if job_addr:
-            job_addr = ''.join(job_addr).strip()
+        job_addr = ''.join(job_addr).strip() if job_addr else ''
         job_tags = etree_html.xpath('//span[@class="highlights__content-item"]/text()')
         company_brief = etree_html.xpath('//div[@class="company__description"]/text()')
-        if company_brief:
-            company_brief = company_brief[0]
+        company_brief = company_brief[0] if company_brief else ''
         number_recruits = etree_html.xpath('//ul[@class="summary-plane__info"]/li[last()]/text()')
-        if number_recruits:
-            number_recruits = number_recruits[0].replace('招', '')
+        number_recruits = number_recruits[0].replace('招', '') if number_recruits else ''
         return job_addr, job_brief, job_tags, company_brief, number_recruits
 
     def parser_zhuopin(self, html, url_name, url=None, *args, **kwargs):
@@ -1630,7 +1626,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
                     'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -1703,7 +1698,7 @@ class BaseCrawl(RequestHeader):
                         link = 'https://www.lagou.com/jobs/%s.html?show=%s' % (job_id, LAGOU_SHOW)
                         job_brief, job_addr, job_evaluate, contact_person = self.second_request_parser(link, url_name)
                         if not job_evaluate:
-                            job_evaluate = '暂无评价'
+                            job_evaluate = ''
                         # print({
                         #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                         #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1726,7 +1721,6 @@ class BaseCrawl(RequestHeader):
                             'company_scale': company_scale, 'company_brief': '',
                             'contact_person': contact_person, 'company_comment': ''
                         })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -1780,15 +1774,14 @@ class BaseCrawl(RequestHeader):
                     edu = item.get('pubEdu')
                     ex = item.get('pubEx')
                     if not edu:
-                        edu = '不限'
+                        edu = ''
                     if not ex:
-                        ex = '不限'
+                        ex = ''
                     company_scale = item.get('scaleName')
                     link = 'https:' + item.get('liHref')
                     job_tags, job_people_number, job_brief, job_addr, company_property, company_brief, job_property, number_recruits, contact_person = self.second_request_parser(
                         link, url_name)
                     company_scale = company_property + '/' + company_scale
-
                     # print({
                     #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1811,7 +1804,6 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': company_brief,
                         'contact_person': contact_person, 'company_comment': ''
                     })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -1829,14 +1821,12 @@ class BaseCrawl(RequestHeader):
         job_people_number = etree_html.xpath('//div[@class="job-msg-bottom"]/span[1]/text()')
         job_brief = etree_html.xpath('//*[@id="jp_maskit"]/pre[2]/text()')
         job_addr = etree_html.xpath('//div[@class="ads-msg"]/span[1]/text()')
-        if job_addr:
-            job_addr = ''.join(job_addr).replace(' ', '')
+        job_addr = ''.join(job_addr).replace(' ', '') if job_addr else ''
         company_property = etree_html.xpath('//ul[@class="info"]/li[3]/span/text()')[0]
         company_brief = etree_html.xpath('//div[@class="i-corp-desc"]/p/text()')
         job_property = etree_html.xpath('//li[@class="full-time"]/span/text()')[0]
         number_recruits = etree_html.xpath('//li[@class="recruiting"]/span/text()')[0]
         contact_person = etree_html.xpath('//a[@class="person-name"]/text()')[0].strip()
-
         return job_tags, job_people_number, job_brief, job_addr, company_property, company_brief, job_property, number_recruits, contact_person
 
     def parser_zhitong(self, html, url_name, url=None, *args, **kwargs):
@@ -1857,6 +1847,8 @@ class BaseCrawl(RequestHeader):
                 response = temp.get('items')
                 if response:
                     for item in response:
+                        company_type = ''
+                        company_number = ''
                         job_title = item.get('posName')
                         if '<em>' in job_title:
                             job_title = job_title.replace('<em>', '')
@@ -1875,9 +1867,9 @@ class BaseCrawl(RequestHeader):
                         edu = item.get('educationDegreeStr')
                         ex = item.get('reqWorkYearStr')
                         if not edu:
-                            edu = '不限'
+                            edu = ''
                         if not ex:
-                            ex = '不限'
+                            ex = ''
                         if not job_property:
                             job_property = ''
                         company_info = item.get('comInfo')
@@ -1885,11 +1877,8 @@ class BaseCrawl(RequestHeader):
                             company_brief = company_info.get('companyIntroduction')
                             company_type = company_info.get('propertyStr')
                             company_number = company_info.get('employeeNumStr')
-                        if not company_type:
-                            company_type = ''
-                        if not company_number:
-                            company_number = ''
-                        company_scale = company_number + '人/' + company_type
+                        if company_number and company_type:
+                            company_scale = company_number + '人/' + company_type
                         link = item.get('posDetailUrl')
                         if link:
                             link = 'http://www.job5156.com' + link
@@ -1918,7 +1907,6 @@ class BaseCrawl(RequestHeader):
                             'company_scale': company_scale, 'company_brief': company_brief,
                             'contact_person': '', 'company_comment': ''
                         })
-
                 else:
                     # 如果为空，将标志位置为真
                     flag_name = 'flag_' + url_name.split('_')[1]
@@ -1933,13 +1921,9 @@ class BaseCrawl(RequestHeader):
         """
         etree_html = etree.HTML(html)
         number_recruits = etree_html.xpath('//ul[@class="requirements"]/li[4]/p/text()')
-        if number_recruits:
-            number_recruits = number_recruits[0]
+        number_recruits = number_recruits[0] if number_recruits else ''
         job_addr = etree_html.xpath('//div[@class="work_addr_detail"]/p/text()')
-        if job_addr:
-            job_addr = job_addr[0]
-        else:
-            job_addr = '暂无详细地址'
+        job_addr = job_addr[0] if job_addr else ''
         age = etree_html.xpath('//ul[@class="pos_need"]/li[1]/text()')[0].strip()
         lang = etree_html.xpath('//ul[@class="pos_need"]/li[2]/text()')[0].strip()
         return number_recruits, job_addr, age, lang
@@ -1968,15 +1952,8 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./li[@class="list_type_first"]/h3/a/@href')[0]
                 salary, ex, number_recruits, job_property, pub_date, job_addr, job_brief, company_type, company_scale, job_tags, job_type = self.second_request_parser(
                     link, url_name)
-                if job_title:
-                    job_title = ''.join(job_title)
-                if not edu:
-                    edu = '不限'
-                else:
-                    edu = edu[0]
-                if not ex:
-                    ex = '不限'
-
+                job_title = ''.join(job_title) if job_title else ''
+                edu = edu[0] if edu else ''
                 # print({
                 #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                 #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1999,7 +1976,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2025,21 +2001,12 @@ class BaseCrawl(RequestHeader):
         temp_info2 = etree_html.xpath('//ul[@class="ul-combscintro"]/li[7]/text()')
         job_tags = etree_html.xpath('//ul[contains(@class,"taglist-jobintro")]//li/text()')
         job_type = etree_html.xpath('//div[@class="coninfo-otherinfo"]/dl[2]/dd/a/text()')[0]
-        if salary:
-            salary = '￥' + salary[0] + '/月'
-        if ex:
-            ex = ex[0].replace('经验', '')
-
-        if number_recruits:
-            number_recruits = number_recruits[0]
-        if job_property:
-            job_property = job_property[0]
-        if job_addr:
-            job_addr = job_addr[0]
-        else:
-            job_addr = '暂无详细地址'
-        if pub_date:
-            pub_date = pub_date[0].replace('更新', '')
+        salary = '￥' + salary[0] + '/月' if salary else ''
+        ex = ex[0].replace('经验', '') if ex else ''
+        number_recruits = number_recruits[0] if number_recruits else ''
+        job_property = job_property[0] if job_property else ''
+        job_addr = job_addr[0] if job_addr else ''
+        pub_date = pub_date[0].replace('更新', '') if pub_date else ''
         if not temp_info1:
             temp_info1 = '暂无'
         if not temp_info2:
@@ -2065,6 +2032,14 @@ class BaseCrawl(RequestHeader):
         response = etree_html.xpath('//ul[@class="searchResult"]/li')
         if response:
             for item in response:
+                job_title = ''
+                company_name = ''
+                number_recruits = ''
+                company_scale = ''
+                company_brief = ''
+                job_brief = ''
+                company_type = ''
+                job_type = ''
                 link = item.xpath('./div/h3/a/@href')[0]
                 something = item.xpath('./div/p/text()')
                 pub_date = item.xpath('./div/p/span/text()')[0]
@@ -2076,14 +2051,13 @@ class BaseCrawl(RequestHeader):
                     information_source = split_things[0].split('：')[1]
                     # 如果是前程无忧的就忽略，已经有单独爬取前程无忧的
                     if '前程无忧' in information_source:
-                        pass
+                        continue
                     elif '本站' in information_source:
                         job_title, company_name, number_recruits, company_scale, company_brief, job_brief, company_type, job_type = self.second_request_parser(
                             link, url_name, 'local')
                     else:
                         job_title, company_name, number_recruits, company_scale, company_brief, job_brief, company_type, job_type = self.second_request_parser(
                             link, url_name)
-
                     # print({
                     #     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
                     #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2106,7 +2080,6 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': '',
                         'contact_person': '', 'company_comment': ''
                     })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2120,7 +2093,6 @@ class BaseCrawl(RequestHeader):
         :return:
         """
         etree_html = etree.HTML(html)
-
         company_type = ''
         number_recruits = ''
         company_scale = ''
@@ -2135,27 +2107,15 @@ class BaseCrawl(RequestHeader):
             company_scale = etree_html.xpath('//ul[contains(@class,"company_detail")]/li[2]/span/text()')
             company_property = etree_html.xpath('//ul[contains(@class,"company_detail")]/li[3]/span/text()')
             company_brief = etree_html.xpath('//div[@id="wordDiv2"]/p/text()')
-
-            if not number_recruits:
-                number_recruits = ''
-            else:
-                number_recruits = number_recruits[0]
-            if not company_scale:
-                company_scale = ''
-            else:
-                company_scale = company_scale[0]
-            if not company_property:
-                company_property = ''
-            else:
-                company_property = company_property[0]
+            number_recruits = number_recruits[0] if number_recruits else ''
+            company_scale = company_scale[0] if company_scale else ''
+            company_property = company_property[0] if company_property else ''
             company_scale = company_property + '/' + company_scale
         else:
             job_title = etree_html.xpath('//div[contains(@class,"info")]/ol/li[5]/u/text()')
-            if job_title:
-                job_title = ''.join(job_title)
+            job_title = ''.join(job_title) if job_title else ''
             job_type = etree_html.xpath('//div[@class="main mleft"]/div[2]/a/text()')
-            if job_type:
-                job_type = job_type[0]
+            job_type = job_type[0] if job_type else ''
             job_brief = etree_html.xpath('//div[@class="jobIntro"]//text()')
             company_name = etree_html.xpath('//div[contains(@class,"main")]/h1/text()')
             if company_name:
@@ -2192,15 +2152,12 @@ class BaseCrawl(RequestHeader):
                 job_addr1 = item.get('examAddress')
                 job_addr2 = item.get('address')
                 job_addr = job_addr2 if job_addr1 != job_addr2 else job_addr1
-
                 job_id = item.get('posId')
                 com_id = item.get('comId')
-
                 link = 'https://www.jobcn.com/position/detail.xhtml?redirect=0&posId={job}&comId={com}&s=search/advanced&acType=1'.format(
                     job=job_id, com=com_id)
                 company_type, company_scale, company_link, number_recruits = self.second_request_parser(
                     link, url_name)
-
                 # print({
                 #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                 #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2223,7 +2180,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': contact_person, 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2241,13 +2197,6 @@ class BaseCrawl(RequestHeader):
         company_scale = etree_html.xpath('//div[@class="base"]/div[1]/dl[2]/dd/text()')[0]
         company_link = etree_html.xpath('//div[@class="base"]/div[1]/dl[3]/dd/a/@href')[0]
         number_recruits = etree_html.xpath('//div[@class="name_pos"]/div/dl[2]/dd/text()')[0]
-        # ocr提取邮箱和联系电话
-        # email = etree_html.xpath('//div[contains(@class,"contactUs_pos")]/div/dl[2]/dd/img/@src')
-        # if email:
-        #     email = 'https://www.jobcn.com' + email[0]
-        # phone = etree_html.xpath('//div[contains(@class,"contactUs_pos")]/div/dl[3]/dd/img/@src')
-        # if phone:
-        #     phone = 'https://www.jobcn.com' + phone[0]
         return company_type, company_scale, company_link, number_recruits
 
     def parser_jiaoshizhaopin(self, html, url_name, url=None, *args, **kwargs):
@@ -2271,7 +2220,6 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[2]/a/@href')[0]
                 company_name, job_title, number_recruits, edu, ex, sex, job_tags, pub_date, job_brief, job_addr, end_time = self.second_request_parser(
                     link, url_name)
-
                 # print({
                 #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
                 #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2294,7 +2242,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2310,7 +2257,6 @@ class BaseCrawl(RequestHeader):
         etree_html = etree.HTML(html)
         company_name = etree_html.xpath('//*[@id="content"]/div[1]/div/div[1]/h1/a/text()')[0]
         job_title = etree_html.xpath('//*[@id="content"]/div[1]/div/div[1]/h2/text()')[0]
-
         pub_date = etree_html.xpath('//li[@class="time"]/span/text()')
         if pub_date:
             pub_date = pub_date[0].split(' ')[0]
@@ -2362,11 +2308,8 @@ class BaseCrawl(RequestHeader):
                 if link_type:
                     link_type = link_type[0]
                     if '培训' in link_type or '其他' in link_type or '教育' in link_type:
-                        # print('job_title', job_title)
                         continue
-
                 if '培训' in job_title or '班' in job_title or '课程' in job_title or '教程' in job_title:
-                    # print('job_title', job_title)
                     continue
                 job_area = item.xpath('./div/div[2]/text()')
                 if job_area:
@@ -2404,7 +2347,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': company_brief,
                     'contact_person': contact_person, 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2453,8 +2395,7 @@ class BaseCrawl(RequestHeader):
         job_type = infor.get('职位类别')
         contact_person = infor.get('联系人')
         company_name = etree_html.xpath('//div[contains(@class,"viewad-meta-item")]/span/text()')
-        if company_name:
-            company_name = ''.join(company_name)
+        company_name = ''.join(company_name) if company_name else ''
         company_type = etree_html.xpath('//div[@class="company-cont"]/p/text()')
         if company_type:
             company_type = company_type[0]
@@ -2532,7 +2473,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2550,21 +2490,14 @@ class BaseCrawl(RequestHeader):
         etree_html = etree.HTML(html)
         number_recruits = etree_html.xpath('//ul[@class="requirements"]/li[4]/p/text()')[0]
         job_type = etree_html.xpath('//div[@class="desc content"]/p/text()')[0]
-        if job_type:
-            job_type = job_type.split('：')[1]
+        job_type = job_type.split('：')[1] if job_type else ''
         job_brief = etree_html.xpath('//div[@class="desc content"]/pre/text()')
         job_addr = etree_html.xpath('//span[@class="addr"]/parent::p/text()')[0].strip()
         company_type = etree_html.xpath('//p[@class="base-info-content"]/span[1]/span/text()')[0].strip()
         company_scale = etree_html.xpath('//p[@class="base-info-content"]/span[2]/span/text()')
         company_property = etree_html.xpath('//p[@class="base-info-content"]/span[3]/span/text()')
-        if not company_scale:
-            company_scale = ''
-        else:
-            company_scale = company_scale[0].strip()
-        if not company_property:
-            company_property = ''
-        else:
-            company_property = company_property[0].strip()
+        company_scale = company_scale[0].strip() if company_scale else ''
+        company_property = company_property[0].strip() if company_property else ''
         company_scale = company_scale + '人/' + company_property
         company_brief = etree_html.xpath('//pre[@class="com_intro_text"]/text()')
         if company_brief:
@@ -2587,10 +2520,8 @@ class BaseCrawl(RequestHeader):
         if response:
             for item in response:
                 job_title = item.xpath('./div/div[1]/h3/a/text()')[0].strip()
-
                 job_area = item.xpath('./div/div[1]/p[1]/a/text()')
-                if job_area:
-                    job_area = ''.join(job_area).strip()
+                job_area = ''.join(job_area).strip() if job_area else ''
                 edu = item.xpath('./div/div[1]/p[1]/span[2]/text()')[0]
                 ex = item.xpath('./div/div[1]/p[1]/span[3]/text()')[0]
                 temp_info = item.xpath('./div/div[1]/p[1]/@title')
@@ -2603,10 +2534,7 @@ class BaseCrawl(RequestHeader):
                 company_name = item.xpath('./div/div[2]/p[@class="company-name"]/a/text()')[0]
                 company_type = item.xpath('./div/div[2]/p[2]/span[1]/text()')[0].strip()
                 company_status = item.xpath('./div/div[2]/p[2]/span[2]/text()')
-                if company_status:
-                    company_status = company_status[0]
-                else:
-                    company_status = ''
+                company_status = company_status[0] if company_status else ''
                 link = item.xpath('./div/div[1]/h3/a/@href')[0]
                 lang, age, job_tags, job_brief, job_addr, company_scale, company_brief = self.second_request_parser(
                     link, url_name)
@@ -2632,7 +2560,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2654,15 +2581,9 @@ class BaseCrawl(RequestHeader):
         job_brief = etree_html.xpath('//div[contains(@class,"content-word")]/text()')
         company_brief = etree_html.xpath('//div[@class="info-word"]/text()')
         company_scale = etree_html.xpath('//ul[@class="new-compintro"]/li[2]/text()')
-        if company_scale:
-            company_scale = company_scale[0].split('：')[1]
-        else:
-            company_scale = ''
+        company_scale = company_scale[0].split('：')[1] if company_scale else ''
         job_addr = etree_html.xpath('//ul[@class="new-compintro"]/li[3]/text()')
-        if job_addr:
-            job_addr = job_addr[0].split('：')[1]
-        else:
-            job_addr = ''
+        job_addr = job_addr[0].split('：')[1] if job_addr else ''
         return lang, age, job_tags, job_brief, job_addr, company_scale, company_brief
 
     def get_current_date(self, html_date):
@@ -2671,7 +2592,6 @@ class BaseCrawl(RequestHeader):
         :param html_date: 网页源码的时间
         :return:
         """
-
         pub_date = ''
         now_time = datetime.now()
         if '前' in html_date:
@@ -2698,10 +2618,6 @@ class BaseCrawl(RequestHeader):
         elif '-' in html_date:
             if html_date.count('-') == 1:
                 pub_date = str(now_time.year) + '-' + html_date
-            elif html_date.count('-') == 2:
-                pass
-            else:
-                pass
         return pub_date
 
     def parser_ganji(self, html, url_name, url=None, *args, **kwargs):
@@ -2751,7 +2667,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2769,47 +2684,26 @@ class BaseCrawl(RequestHeader):
         etree_html = etree.HTML(html)
         job_tags = etree_html.xpath('//ul[contains(@class,"welfare-line")]//li/span/text()')
         job_addr = etree_html.xpath('//div[contains(@class,"location-line")]/p/text()')
-        if job_addr:
-            job_addr = job_addr[0].strip().replace(' ', '')
+        job_addr = job_addr[0].strip().replace(' ', '') if job_addr else ''
         number_recruits = etree_html.xpath('//div[@class="description-label"]/span[1]/text()')
-        if number_recruits:
-            number_recruits = number_recruits[0]
-
+        number_recruits = number_recruits[0] if number_recruits else ''
         edu = etree_html.xpath('//div[@class="description-label"]/span[2]/text()')
-        if edu:
-            edu = edu[0].replace('学历', '')
-        else:
-            edu = '不限'
+        edu = edu[0].replace('学历', '') if edu else ''
         ex = etree_html.xpath('//div[@class="description-label"]/span[3]/text()')
-        if ex:
-            ex = ex[0].replace('要求', '')
-        else:
-            ex = '不限'
+        ex = ex[0].replace('要求', '') if ex else ''
         age = etree_html.xpath('//div[@class="description-label"]/span[4]/text()')
-        if age:
-            age = age[0].replace('年龄', '').replace('要求', '')
-        else:
-            age = ''
+        age = age[0].replace('年龄', '').replace('要求', '') if age else ''
         job_brief = etree_html.xpath('//div[@class="description-content"]//text()')
         company_type = etree_html.xpath('//div[@class="introduce"]/span[3]/text()')
-        if company_type:
-            company_type = ''.join(company_type)
+        company_type = ''.join(company_type) if company_type else ''
         temp1 = etree_html.xpath('//div[@class="introduce"]/span[1]/text()')
         temp2 = etree_html.xpath('//div[@class="introduce"]/span[2]/text()')
-        if temp1:
-            temp1 = temp1[0]
-        else:
-            temp1 = ''
-        if temp2:
-            temp2 = temp2[0]
-        else:
-            temp2 = ''
+        temp1 = temp1[0] if temp1 else ''
+        temp2 = temp2[0] if temp2 else ''
         company_scale = temp1 + '/' + temp2
         company_name = etree_html.xpath('//div[@class="company-info"]/h3/a/text()')
-        if company_name:
-            company_name = ''.join(company_name)
+        company_name = ''.join(company_name) if company_name else ''
         company_brief = etree_html.xpath('//div[@class="info-text"]/div/text()')
-
         return job_tags, job_addr, number_recruits, edu, ex, job_brief, age, company_name, company_scale, company_type, company_brief
 
     def parser_ganji_it(self, html, url_name, url=None, *args, **kwargs):
@@ -2871,7 +2765,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -2889,7 +2782,6 @@ class BaseCrawl(RequestHeader):
 
         job_tags, job_addr, number_recruits, edu, ex, job_brief, age, company_name, company_scale, company_type, company_brief = self.second_parser_ganji(
             html, link, *args, **kwargs)
-
         return job_tags, job_addr, number_recruits, edu, ex, job_brief, age, company_name, company_scale, company_type, company_brief
 
     def parser_58(self, html, url_name, url=None, *args, **kwargs):
@@ -2906,7 +2798,6 @@ class BaseCrawl(RequestHeader):
 
         index = kwargs.get('index')
         etree_html = etree.HTML(html)
-
         response = etree_html.xpath('//ul[@id="list_con"]/li[contains(@class,"job_item")]')
         if response:
             for item in response:
@@ -2930,14 +2821,8 @@ class BaseCrawl(RequestHeader):
                 job_type = item.xpath('./div[@class="item_con job_comp"]/p[@class="job_require"]/span[1]/text()')[0]
                 edu = item.xpath('./div[@class="item_con job_comp"]/p[@class="job_require"]/span[2]/text()')
                 ex = item.xpath('./div[@class="item_con job_comp"]/p[@class="job_require"]/span[3]/text()')
-                if edu:
-                    edu = edu[0]
-                else:
-                    edu = ''
-                if ex:
-                    ex = ex[0]
-                else:
-                    ex = ''
+                edu = edu[0] if edu else ''
+                ex = ex[0] if ex else ''
                 number_recruits, pub_date, job_addr, job_brief, company_brief, company_type, company_scale = self.second_request_parser(
                     link, url_name)
 
@@ -2963,7 +2848,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3026,10 +2910,8 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./@data-detail')[0]
                 if pub_source:
                     # 发布于第三方网站，导致二级网站太多，无法一一分析，所以跳过解析
-                    # print(pub_source)
                     continue
                 if 'https://www.chinahr.com' not in link:
-                    # print(link)
                     continue
                 job_title = item.xpath('./ul[@class="l1"]/li[@class="job-name"]/text()')[0]
                 pub_date = item.xpath('./ul[@class="l1"]/li[@class="fabu-date"]/text()')[0].strip()
@@ -3080,7 +2962,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': '', 'company_comment': comments
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3177,7 +3058,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3252,7 +3132,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': contact_person, 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3314,15 +3193,9 @@ class BaseCrawl(RequestHeader):
             company_scale = company_property + '/' + company_scale
         contact_person = \
             etree_html.xpath('//div[@class="main_right"]/div[2]/div[@class="job_info_detail"]/ul/li[1]/text()')
-        if contact_person:
-            contact_person = contact_person[0]
-        else:
-            contact_person = ''
+        contact_person = contact_person[0] if contact_person else ''
         job_addr = etree_html.xpath('//div[@class="main_right"]/div[3]/div[@class="job_info_detail"]/ul/li[1]/text()')
-        if job_addr:
-            job_addr = job_addr[0].split('：')[1]
-        else:
-            job_addr = ''
+        job_addr = job_addr[0].split('：')[1] if job_addr else ''
         return job_tags, number_recruits, job_addr, job_area, job_brief, company_type, contact_person, age, major, pub_date, company_scale, edu, ex
 
     def parser_linkin(self, html, url_name, url=None, *args, **kwargs):
@@ -3369,7 +3242,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3411,8 +3283,7 @@ class BaseCrawl(RequestHeader):
                 if job_title:
                     job_title = job_title[0].strip()
                 job_property = item.xpath('./div[@class="jzList-txt"]/ul/li[1]/text()')[0].replace(' ', '').replace(
-                    '\n',
-                    '')
+                    '\n', '')
                 job_type = item.xpath('./div[@class="jzList-txt"]/ul/li[2]/text()')[0]
                 job_area = item.xpath('./div[@class="jzList-txt"]/ul/li[3]/text()')
                 job_area = ''.join(job_area).replace(' ', '').replace('\n', '')
@@ -3445,7 +3316,6 @@ class BaseCrawl(RequestHeader):
                     'company_status': '', 'phone': '', 'driver_license': '',
                     'company_scale': '', 'company_brief': '', 'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3481,7 +3351,6 @@ class BaseCrawl(RequestHeader):
                     age = item
                 elif '男' in item or '女' in item or '性别' in item:
                     sex = item.replace('性别', '')
-
         job_brief = etree_html.xpath('//p[@data-name="contentBox"]/text()')
         job_addr = etree_html.xpath('//div[@id="work-addr-fold"]/div[@class="jz-d-area"]/text()')
         if job_addr:
@@ -3489,10 +3358,7 @@ class BaseCrawl(RequestHeader):
         company_name = etree_html.xpath('//div[@class="cpy-name"]/a/text()')[0].strip()
         company_type = etree_html.xpath('//span[contains(text(),"行业类型")]/following-sibling::span[1]/text()')
         # company_type = etree_html.xpath('//span[contains(text(),"行业类型")]/../span[2]/text()')
-        if company_type:
-            company_type = company_type[0]
-        else:
-            company_type = ''
+        company_type = company_type[0] if company_type else ''
         return sex, age, job_brief, job_addr, company_type, company_name, edu, ex
 
     def parser_gongzuochong(self, html, url_name, url=None, *args, **kwargs):
@@ -3556,7 +3422,6 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': company_brief,
                         'contact_person': contact_person, 'company_comment': ''
                     })
-
             else:
                 # 如果为空，将标志位置为真
                 flag_name = 'flag_' + url_name.split('_')[1]
@@ -3585,7 +3450,7 @@ class BaseCrawl(RequestHeader):
                 job_addr = company_info.get('address')
                 company_brief = company_info.get('description')
                 company_scale = company_scale + '/' + company_property
-        return contact_person, ex, job_brief, job_addr, company_type, company_scale, company_brief
+                return contact_person, ex, job_brief, job_addr, company_type, company_scale, company_brief
 
     def parser_ofweek(self, html, url_name, url=None, *args, **kwargs):
         """
@@ -3644,7 +3509,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': '', 'company_brief': '',
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3722,7 +3586,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': '', 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3784,11 +3647,9 @@ class BaseCrawl(RequestHeader):
                 if '面议' not in salary:
                     salary, i_salary = self.get_format_salary(salary)
                 ex = item.xpath('./div[@class="search_job_left_siaber"]/div[2]/span[2]/em/text()')[0].strip().replace(
-                    '经验',
-                    '')
+                    '经验', '')
                 edu = item.xpath('./div[@class="search_job_left_siaber"]/div[2]/span[4]/em/text()')[0].strip().replace(
-                    '学历',
-                    '')
+                    '学历', '')
                 job_area = item.xpath('./div[@class="search_job_left_siaber"]/div[2]/span[6]/em/text()')[0]
                 company_name = item.xpath('./div[@class="company_det_c_name"]/div[1]/a/text()')[0]
                 temp_company_info = item.xpath('./div[@class="company_det_c_name"]/div[2]/div[1]/text()')
@@ -3804,7 +3665,6 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[@class="search_job_left_siaber"]/div[1]/a/@href')[0]
                 job_brief, marriage, contact_person, job_tags, age, sex, number_recruits, pub_date, company_brief, job_property = self.second_request_parser(
                     link, url_name)
-
                 # print({
                 #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                 #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3827,7 +3687,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': company_brief,
                     'contact_person': contact_person, 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -3846,16 +3705,10 @@ class BaseCrawl(RequestHeader):
         job_brief = etree_html.xpath('//div[@class="Job_Description"]//text()')
         marriage = etree_html.xpath(
             '//div[contains(@class,"Company_Basic_information_list") and position()=1]/div/span[contains(text(),"婚")]/text()')
-        if marriage:
-            marriage = ''.join(marriage)
-        else:
-            marriage = ''
+        marriage = ''.join(marriage) if marriage else ''
         number_recruits = etree_html.xpath(
             '//div[contains(@class,"Company_Basic_information_list") and position()>1]/div/span[contains(text(),"招聘")]/text()')
-        if number_recruits:
-            number_recruits = ''.join(number_recruits)
-        else:
-            number_recruits = ''
+        number_recruits = ''.join(number_recruits) if number_recruits else ''
         contact_person = etree_html.xpath('//div[@class="jobshow_telman"]/text()')[0]
         job_tags = etree_html.xpath('//div[@class="Company_Basic_information_r mt20"]//span/text()')
         age = etree_html.xpath(
@@ -3871,10 +3724,7 @@ class BaseCrawl(RequestHeader):
             pub_date = ''.join(pub_date).split('更新')[0].strip()
         company_brief = etree_html.xpath('//div[@id="job_content"]//text()')
         job_property = etree_html.xpath('//span[@class="yun_com_fl_dy "]/text()')
-        if job_property:
-            job_property = job_property[0]
-        else:
-            job_property = ''
+        job_property = job_property[0] if job_property else ''
         return job_brief, marriage, contact_person, job_tags, age, sex, number_recruits, pub_date, company_brief, job_property
 
     def parser_wztxjob(self, html, url_name, url=None, *args, **kwargs):
@@ -4006,7 +3856,6 @@ class BaseCrawl(RequestHeader):
                         'company_scale': company_scale, 'company_brief': company_brief,
                         'contact_person': '', 'company_comment': ''
                     })
-
             else:
                 # 如果为空，将标志位置为真
                 flag_name = 'flag_' + url_name.split('_')[1]
@@ -4059,10 +3908,7 @@ class BaseCrawl(RequestHeader):
                     job_property = item.get('ftype')
                     job_type = item.get('type')
                     job_tags = item.get('welfare')
-                    if job_tags:
-                        job_tags = job_tags.split('+')
-                    else:
-                        job_tags = ''
+                    job_tags = job_tags.split('+') if job_tags else ''
                     sex = item.get('sex') if item.get('sex') else ''
                     age = item.get('age_need') if item.get('age_need') else ''
                     pub_date = item.get('lastmod')
@@ -4085,7 +3931,6 @@ class BaseCrawl(RequestHeader):
                     quote_city = urllib.parse.quote(city)
                     link = 'https://zhaopin.baidu.com/jzzw?id={id}&query={q}&city={c}'.format(id=url_id, c=quote_city,
                                                                                               q=args_urlencode)
-
                     job_addr2, job_brief = self.second_request_parser(link, url_name)
                     if not job_addr:
                         job_addr = job_addr2
@@ -4111,7 +3956,6 @@ class BaseCrawl(RequestHeader):
                         'company_scale': '', 'company_brief': company_brief,
                         'contact_person': '', 'company_comment': ''
                     })
-
             else:
                 # 如果为空，将标志位置为真
                 flag_name = 'flag_' + url_name.split('_')[1]
@@ -4179,7 +4023,6 @@ class BaseCrawl(RequestHeader):
                     'company_scale': company_scale, 'company_brief': '',
                     'contact_person': contact_person, 'company_comment': ''
                 })
-
         else:
             # 如果为空，将标志位置为真
             flag_name = 'flag_' + url_name.split('_')[1]
@@ -4281,20 +4124,16 @@ class GeventCrawl(BaseCrawl):
         """
         tasks = []
         gevent_pool = Pool(GEVENT_POOL)
-        for urls in self.request_urls:
-            url = urls.get('url')
-            url_name = urls.get('type')
-            domain = url_name.split('_', 1)[1]
-            print('正在爬取 %s 网站的数据' % domain)
-            # args = urls.get('args')
-            # if not args:
-            #     args = self.get_args()
-            for args in self.search_args:
-                proxy = self.get_proxy()
+        for args in self.search_args:
+            args_urlencode = urllib.parse.quote(args)
+            for urls in self.request_urls:
+                url = urls.get('url')
+                url_name = urls.get('type')
+                domain = url_name.split('_', 1)[1]
+                print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
                 timer = self.get_random_time()
                 gevent.sleep(timer)
-                args_urlencode = urllib.parse.quote(args)
-                task = gevent_pool.spawn(self.request_url, url, url_name, proxy, args_urlencode, args)
+                task = gevent_pool.spawn(self.request_url, url, url_name, args_urlencode, args)
                 tasks.append(task)
         done = gevent.joinall(tasks)
         if done:
@@ -4302,35 +4141,41 @@ class GeventCrawl(BaseCrawl):
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
+    def request_format_site(self, url_name, args, args_urlencode, index, page=None):
         """
-        请求格式化好的所有url
-        :param target_urls: 所有目标url,类型为集合
+        分发请求url
         :param url_name: url别名
-        :param proxy: 代理
-        :param args_urlencode: url编码后后的搜索关键词
-        :param i: 页码
-        :param index: 搜索关键词
+        :param page: 页码
+        :param args: 搜索关键词
+        :param args_urlencode: 已作url编码的搜索关键词
+        :param index: 索引
         :param city_code: 城市代码
         :return:
         """
-        # 遍历请求
-        # print(target_urls)
         tasks = []
         gevent_pool = Pool(GEVENT_POOL + 10)
-        try:
-            for target_url in target_urls:
-                timer = self.get_random_time()
-                gevent.sleep(timer)
-                task = gevent_pool.spawn(self.request_format_url, target_url, url_name, proxy, args_urlencode, i, index,
-                                         city_code)
-                tasks.append(task)
+        for current_url in list(self.target_urls_dict):
+            # 获取最新待爬取的url
+            if self.invalid_urls:
+                self.target_urls -= self.invalid_urls
+                self.flush_target_urls_dict()
+            url_name = self.target_urls_dict.get(current_url)
+            if url_name:
+                city_codes = self.get_city_codes(url_name)  # url_name 改变，city_code也要跟着改变
+                if city_codes:
+                    for city_code in city_codes:
+                        task = gevent_pool.spawn(self.distribute_request_url, current_url, url_name, args,
+                                                 args_urlencode,
+                                                 index, page, city_code)
+                        tasks.append(task)
+                else:
+                    task = gevent_pool.spawn(self.distribute_request_url, current_url, url_name, args, args_urlencode,
+                                             index, page)
+                    tasks.append(task)
+        if tasks:
             done = gevent.joinall(tasks)
             if done:
                 gevent.killall(tasks)
-        except BaseException as e:
-            # print(e)
-            CRAWL_LOG.error('request exception occurred:%s' % e)
 
     def get_scheduler(self):
         cls = GeventScheduler
@@ -4345,54 +4190,55 @@ class ThreadPoolCrawl(BaseCrawl):
         线程池式的请求所有url
         :return:
         """
-
         thread = ThreadPoolExecutor(THREAD_POOL)
         tasks = []
-        for urls in self.request_urls:
-            url = urls.get('url')
-            url_name = urls.get('type')
-            domain = url_name.split('_', 1)[1]
-            print('正在爬取 %s 网站的数据' % domain)
-            # args = urls.get('args')
-            # if not args:
-            #     args = self.get_args()
-            for args in self.search_args:
-                proxy = self.get_proxy()
-                args_urlencode = urllib.parse.quote(args)
+        for args in self.search_args:
+            args_urlencode = urllib.parse.quote(args)
+            for urls in self.request_urls:
+                url = urls.get('url')
+                url_name = urls.get('type')
+                domain = url_name.split('_', 1)[1]
+                print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
                 timer = self.get_random_time()
                 time.sleep(timer)
-                task = thread.submit(self.request_url, url, url_name, proxy, args_urlencode, args)
+                task = thread.submit(self.request_url, url, url_name, args_urlencode, args)
                 tasks.append(task)
         wait(tasks)
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
+    def request_format_site(self, url_name, args, args_urlencode, index, page=None):
         """
-        请求格式化好的所有url
-        :param target_urls: 所有目标url,类型为集合
+        分发请求url
         :param url_name: url别名
-        :param proxy: 代理
-        :param args_urlencode: url编码后后的搜索关键词
-        :param i: 页码
-        :param index: 搜索关键词
+        :param page: 页码
+        :param args: 搜索关键词
+        :param args_urlencode: 已作url编码的搜索关键词
+        :param index: 索引
         :param city_code: 城市代码
         :return:
         """
         thread = ThreadPoolExecutor(THREAD_POOL)
-        # 遍历请求
-        # print(target_urls)
         tasks = []
-        try:
-            for url in target_urls:
-                task = thread.submit(self.request_format_url, url, url_name, proxy, args_urlencode, i, index, city_code)
-                tasks.append(task)
-                timer = self.get_random_time()
-                time.sleep(timer)
+        for current_url in list(self.target_urls_dict):
+            # 获取最新待爬取的url
+            if self.invalid_urls:
+                self.target_urls -= self.invalid_urls
+                self.flush_target_urls_dict()
+            url_name = self.target_urls_dict.get(current_url)
+            if url_name:
+                city_codes = self.get_city_codes(url_name)  # url_name 改变，city_code也要跟着改变
+                if city_codes:
+                    for city_code in city_codes:
+                        task = thread.submit(self.distribute_request_url, current_url, url_name, args, args_urlencode,
+                                             index, page, city_code)
+                        tasks.append(task)
+                else:
+                    task = thread.submit(self.distribute_request_url, current_url, url_name, args, args_urlencode,
+                                         index, page)
+                    tasks.append(task)
+        if tasks:
             wait(tasks)
-        except BaseException as e:
-            # print(e)
-            CRAWL_LOG.error('request exception occurred:%s' % e)
 
     def get_scheduler(self):
         cls = BackgroundScheduler
@@ -4410,41 +4256,24 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
         loop = asyncio.get_event_loop()
         thread = ThreadPoolExecutor(THREAD_POOL)
         tasks = []
-        for urls in self.request_urls:
-            url = urls.get('url')
-            url_name = urls.get('type')
-            domain = url_name.split('_', 1)[1]
-            print('正在爬取 %s 网站的数据' % domain)
-            # args = urls.get('args')
-            # if not args:
-            #     args = self.get_args()
-            for args in self.search_args:
-                proxy = self.get_proxy()
-                args_urlencode = urllib.parse.quote(args)
+        for args in self.search_args:
+            args_urlencode = urllib.parse.quote(args)
+            for urls in self.request_urls:
+                url = urls.get('url')
+                url_name = urls.get('type')
+                domain = url_name.split('_', 1)[1]
+                print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
                 timer = self.get_random_time()
                 time.sleep(timer)
-                task = loop.run_in_executor(thread, self.request_url, url, url_name, proxy, args_urlencode, args)
+                task = loop.run_in_executor(thread, self.request_url, url, url_name, args_urlencode, args)
                 tasks.append(task)
         loop.run_until_complete(asyncio.wait(tasks))
         # 异步操作会有重复的数据,去重
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
-    def request_format_site(self, target_urls, url_name, proxy, args_urlencode, i, index, city_code):
-        """
-        请求格式化好的所有url
-        :param target_urls: 所有目标url,类型为集合
-        :param url_name: url别名
-        :param proxy: 代理
-        :param args_urlencode: url编码后后的搜索关键词
-        :param i: 页码
-        :param index: 搜索关键词
-        :param city_code: 城市代码
-        :return:
-        """
-        # 异步的loop下不能再开loop，所以直接继承父类的该方法
-        super(ThreadPoolAsynicCrawl, self).request_format_site(target_urls, url_name, proxy, args_urlencode, i, index,
-                                                               city_code)
+    # 异步的loop下不能再开loop，所以直接继承父类的该方法
+    # def request_format_site(self, target_url, url_name, args_urlencode, i, index):
 
     def get_scheduler(self):
         """
@@ -4487,8 +4316,6 @@ def save_redis(jobs, key=None):
                 jobs = duplicate_removal(jobs)
                 print('数据库内已存有 %s 个职位信息' % len(jobs))
                 conn.set(key, str(jobs))
-            else:
-                pass
 
 
 def save_url_redis(se, key=None):
@@ -4515,8 +4342,10 @@ def save_url_redis(se, key=None):
         conn.set(key, str(se))
         if key == 'target_urls':
             print('数据库内存有 %s 个目标url待爬取' % len(se))
-        if key == 'market_urls':
+        elif key == 'market_urls':
             print('已爬取了 %s 个目标url' % len(se))
+        elif key == 'invalid_urls':
+            print('已删除 %s 个无效目标url' % len(se))
 
 
 def cover_url_redis(se, key=None):
@@ -4579,7 +4408,6 @@ def get_url_redis(key=None):
         print('协程因为并发性能太强导致并发量太大,redis数据库无法承受,请去掉一部分待爬取网站或者改用线程池的方式', e)
     if cont:
         urls = eval(cont)
-        print('数据库内存有 %s 个目标url待爬取' % len(urls))
         return urls
 
 
@@ -4594,7 +4422,6 @@ def main(cls=None):
     # 实例化proxy类，方便后期单例模式调用
     proxy_obj = ProxyHandler()
     proxies = duplicate_removal(proxy_obj.get_proxies())
-
     # 实例化目标url类，方便后期单例模式调用
     target_obj = TargetUrlHandler()
     target_urls = target_obj.get_target_urls()
@@ -4602,7 +4429,6 @@ def main(cls=None):
     start = time.time()
     crawl = cls()
     crawl.proxy_list = proxies  # 测试时防止代理报错影响结果可以先注释掉
-
     crawl.target_urls = target_urls
     result = crawl.run()
     save_redis(result)  # 存入redis数据库
@@ -4615,4 +4441,3 @@ if __name__ == '__main__':
     main()  # 协程方式, 测试时需要查看报错结果可以使用gevent协程的方法
     # main(ThreadPoolCrawl)  # 线程池的方式
     # main(ThreadPoolAsynicCrawl)  # 线程池+异步的方式
-

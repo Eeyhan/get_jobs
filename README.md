@@ -8,13 +8,16 @@
 
 ### 二次开发者请遵纪守法，且爬到的数据永远不以商业形式售卖，否则后果自负
 
-+ 说明：如果遇到这个提示：
-
-	“UserWarning: libuv only supports millisecond timer resolution; all times less will be set to 1 ms  self.timer = get_hub().loop.timer(seconds or 0.0, ref=ref, priority=priority)”
-	
-	* 这是一个gevent的已知bug，对程序运行没有任何影响，可以忽略
 
 ## 更新进度：
+
++ 2019/9/18更新：
+
+	* 解决高并发下请求目标url的有效性，保证尽可能多的爬取数据
+	* 有效躲避反爬机制检测
+	* 优化断点续爬功能
+	* 优化已知的小bug
+	* 去掉不必要的代码
 
 + 2019/9/15更新：
 
@@ -138,17 +141,37 @@
 	默认是协程方式，建议选用线程池+异步的方式，需要用哪种方式取消该注释即可
 	
 + 4.如果需要解决IP封禁问题：先进入proxy文件夹，运行proxy.py爬取好代理并组成代理池，再运行v1.py文件即可  
-
+	
+	* 在带上代理并运行v1.py文件时，如果不想在程序每次运行都检测代理可用性，可以把proxy.py文件的get_redis函数的检测代理部分注释掉（文件第1103行，默认已注释）
 
 + 更多配置说明请自行阅读config.py的文件说明，支持自定制，自添加，二次开发（再次强调，请遵纪手法，否则后果自负）
 
 + 有问题请提交issue，有空我会更新
 
+
+## 相关报错/提示：
+
++ “UserWarning: libuv only supports millisecond timer resolution; all times less will be set to 1 ms  self.timer = get_hub().loop.timer(seconds or 0.0, ref=ref, priority=priority)”
+	
+	* 这是一个gevent的已知bug，对程序运行没有任何影响，可以忽略
+
++ Run time of job "save_redis (trigger: interval[0:00:15], next run at: 2019-09-15 11:28:59 CST)" was missed by 0:00:01.461780  或者 Execution of job "save_redis (trigger: interval[0:00:15], next run at: 2019-09-15 13:11:44 CST)" skipped: maximum number of running instances reached (1)
+	
+	* 这是apscheduler定时框架在存储时的计时机制导致的，在程序启动之前就开始计时，直到目标任务结束就是一个间隔时间，配置文件里设置的30秒存一次数据（可以自定义修改），如果中途某个函数因为某个原因运行时间过长，超过30秒就会有以上提示，不影响整个程序，因为还会在下一个30秒后存储数据，保证数据不丢失
+
++ 报内存错误 MemorryError
+
+	![内存错误](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_5_MemoryError.png)
+	
+	* 这个问题是由于数据量太大导致内存不足错误，在配置文件congfig.py里减少搜索关键词，减少爬取深度的页码，扩大你的电脑的虚拟内存（自行百度）
+
 ### 运行结果：
 
 ![启动运行](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_1.png)
 ![运行中](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_2.png)
+![运行完毕](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_4.png)
 ![redis数据库结果](https://raw.githubusercontent.com/Eeyhan/pictures/master/job_3.png)
+
 
 ## 更多代理池说明：[IPproxy](https://github.com/Eeyhan/IPproxy "IPproxy")
 
