@@ -16,10 +16,8 @@ from lxml import etree
 import random
 import time
 import json
-import chardet
 import asyncio
 import os
-import urllib3
 import sys
 
 sys.path.append(os.path.dirname(__file__))
@@ -27,12 +25,11 @@ from datetime import datetime
 from datetime import timedelta
 import re
 import redis
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
+from concurrent.futures import ThreadPoolExecutor, wait
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.schedulers.gevent import GeventScheduler
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 from proxy.proxy import get_redis as get_proxy_redis
 from config import USER_AGENT, REQEUST_URLS, ZHUOPIN_CLIENT_ID, LAGOU_SHOW, POOL, POOL2, POOL3
 from config import BOSS_COOKIE, SEARCH_ARGS, INTERVAL, END_PAGE, GEVENT_POOL, THREAD_POOL
@@ -117,14 +114,15 @@ class BaseCrawl(RequestHeader):
 
     def __init__(self):
         super(BaseCrawl, self).__init__()
-        self.header = self.get_header
-        self.request_urls = self.get_request_urls
-        self.proxy_list = None
-        self.target_urls = None
-        self.target_urls_dict = dict()
-        self.invalid_urls = set()
-        self.jobs = []
-        self.search_args = SEARCH_ARGS
+        self.header = self.get_header               # 请求头
+        self.request_urls = self.get_request_urls   # 待格式化的所有目标请求站
+        self.proxy_list = None                      # 代理列表
+        self.target_urls = None                     # 目标url
+        self.target_urls_dict = dict()              # 目标url的字典形式
+        self.invalid_urls = set()                   # 无效url
+        self.jobs = []                              # 爬取到的职位信息
+        self.search_args = SEARCH_ARGS              # 搜索关键词列表
+        self.is_end = False                         # 完结信号
 
     def get_urls_flag(self, url_name):
         """
@@ -151,8 +149,7 @@ class BaseCrawl(RequestHeader):
         取一个0-0.5之间的随机小数数
         :return:
         """
-        timer = random.randint(0, 50)
-        timer /= 100
+        timer = random.uniform(0, 3)
         timer = round(timer, 2)
         return timer
 
@@ -537,7 +534,7 @@ class BaseCrawl(RequestHeader):
                     session.keep_alive = False
                     session.close()
                 except BaseException as e:
-                    print('触发百度反爬侦测')
+                    # print('触发百度反爬侦测')
                     CRAWL_LOG.error('Hit by Baidu anti-crawl policy')
             if res:
                 if 'parser_baidu' == url_name:
@@ -593,11 +590,16 @@ class BaseCrawl(RequestHeader):
         for args in self.search_args:
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
-                url = urls.get('url')
-                url_name = urls.get('type')
-                domain = url_name.split('_', 1)[1]
-                print('正在爬取 %s 网站的 %s 相关岗位的数据' % (domain, args))
-                self.request_url(url, url_name, args_urlencode, args)
+                if self.is_end:
+                    print('全部url已爬取完毕')
+                    CRAWL_LOG.info('all target urls request finished')
+                    return self.jobs
+                else:
+                    url = urls.get('url')
+                    url_name = urls.get('type')
+                    domain = url_name.split('_', 1)[1]
+                    print('正在爬取 %s 网站的 %s 相关岗位的数据' % (domain, args))
+                    self.request_url(url, url_name, args_urlencode, args)
 
     def get_cookie(self, url, url_name=None, args=None):
         """
@@ -670,19 +672,19 @@ class BaseCrawl(RequestHeader):
         :param args: 未编码的搜索职位名参数
         :return:
         """
-
-        # 索引字段
-        index = args
-        if not args_urlencode:
-            args_urlencode = urllib.parse.quote('python')
-        # 获取城市代码
-        city_codes = self.get_city_codes(url_name)
-        # 如果有城市代码
-        if city_codes:
-            for city_code in city_codes:
-                self.enumerate_request_urls(url, url_name, args, args_urlencode, index, city_code)
-        else:
-            self.enumerate_request_urls(url, url_name, args, args_urlencode, index)
+        if not self.is_end:
+            # 索引字段
+            index = args
+            if not args_urlencode:
+                args_urlencode = urllib.parse.quote('python')
+            # 获取城市代码
+            city_codes = self.get_city_codes(url_name)
+            # 如果有城市代码
+            if city_codes:
+                for city_code in city_codes:
+                    self.enumerate_request_urls(url, url_name, args, args_urlencode, index, city_code)
+            else:
+                self.enumerate_request_urls(url, url_name, args, args_urlencode, index)
 
     def enumerate_request_urls(self, url, url_name, args, args_urlencode, index, city_code=None):
         """
@@ -729,8 +731,7 @@ class BaseCrawl(RequestHeader):
             temp_compare_url = self.target_urls
             if market_urls:
                 if market_urls == self.target_urls:
-                    print('全部url已爬取完毕')
-                    CRAWL_LOG.info('all target urls request finished')
+                    self.is_end = True
                     return
                 else:  # 未爬取完毕(断点续爬)
                     # 如果有已爬取过的url,加上已爬取和无效的url再和新生成的所有目标url对比,不等则重新赋值
@@ -941,7 +942,7 @@ class BaseCrawl(RequestHeader):
             print('正在爬取网站 %s 的 %s 岗位的 第 %s 页数据' % (domain, args, i))
             flag = self.get_urls_flag(url_name)
             if flag:
-                print('该链接下已无 %s 相关数据，已切换到其他url继续爬取.....' % index)
+                # print('该链接下已无 %s 相关数据，已切换到其他url继续爬取.....' % index)
                 # 删除对应的无效url
                 invalid_url = self.generate_reqeust_invalid_urls(target_url, city_code, url_name, args,
                                                                  args_urlencode, page)
@@ -1313,15 +1314,7 @@ class BaseCrawl(RequestHeader):
         job_evaluate_content = etree_html.xpath('//p[@class="c_s_result_text mb15"]/text()')
         job_evaluate = ''.join(job_evaluate_title).strip() + ',' + ''.join(job_evaluate_content).strip()
 
-        # print({
-        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': job_property,
-        #     'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': '', 'pub_date': '', 'end_time': '',
-        #     'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-        #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': job_evaluate,
-        #     'company_name': company_name, 'company_type': company_type, 'company_status': '', 'phone': '',
-        #     'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
-        #     'company_comment': company_comment
-        # })
+
         self.jobs.append({
             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': job_property,
             'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': '', 'pub_date': '', 'end_time': '',
@@ -1399,15 +1392,7 @@ class BaseCrawl(RequestHeader):
             pub_date = pub_date[0].split('：')[1]
         company_brief = etree_html.xpath('//div[@class="job-sec company-info"]/div[@class="text"]/text()')
         contact_person = etree_html.xpath('//h2[@class="name"]/text()')[0]
-        # print({
-        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': '',
-        #     'job_status': job_status, 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
-        #     'end_time': '', 'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '',
-        #     'job_brief': job_brief, 'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-        #     'company_name': company_name, 'company_type': company_type, 'company_status': company_status, 'phone': '',
-        #     'driver_license': '', 'company_scale': company_scale, 'company_brief': company_brief,
-        #     'contact_person': contact_person, 'company_comment': ''
-        # })
+
         self.jobs.append({
             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': '',
             'job_status': job_status, 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
@@ -1474,15 +1459,7 @@ class BaseCrawl(RequestHeader):
         company_scale = etree_html.xpath('//div[@class="com_tag"]/p[2]/@title')[0] + '/' + \
                         etree_html.xpath('//div[@class="com_tag"]/p[3]/@title')[0]
         company_brief = etree_html.xpath('//div[contains(@class,"tmsg")]/text()')[0].strip()
-        # print({
-        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type, 'job_property': '',
-        #     'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
-        #     'end_time': '', 'age': '', 'sex': '', 'edu': edu, 'ex': ex, 'marriage': '', 'lang': '',
-        #     'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
-        #     'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
-        #     'company_status': '', 'phone': '', 'driver_license': '', 'company_scale': company_scale,
-        #     'company_brief': company_brief, 'contact_person': '', 'company_comment': ''
-        # })
+
         self.jobs.append({
             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type, 'job_property': '',
             'job_status': '', 'job_area': job_area, 'major': '', 'job_addr': job_addr, 'pub_date': pub_date,
@@ -1531,17 +1508,7 @@ class BaseCrawl(RequestHeader):
                 link = item.get('positionURL')
                 job_addr, job_brief, job_tags, company_brief, number_recruits = self.second_request_parser(link,
                                                                                                            url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': job_property, 'job_status': job_status, 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '', 'edu': edu,
-                #     'ex': ex,
-                #     'marriage': '', 'lang': '', 'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link,
-                #     'number_recruits': number_recruits, 'job_evaluate': '', 'company_name': company_name,
-                #     'company_type': company_type, 'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
-                #     'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': job_status, 'job_area': job_area, 'major': '',
@@ -1604,17 +1571,7 @@ class BaseCrawl(RequestHeader):
                     job_id, ZHUOPIN_CLIENT_ID)
                 job_addr, salary, job_brief, company_brief, job_type, number_recruits, lang, age = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '', 'edu': edu,
-                #     'ex': ex,
-                #     'marriage': '', 'lang': lang, 'job_brief': job_brief, 'job_tags': job_tags, 'job_link': link,
-                #     'number_recruits': number_recruits, 'job_evaluate': '', 'company_name': company_name,
-                #     'company_type': company_type, 'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief, 'contact_person': '',
-                #     'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1699,17 +1656,7 @@ class BaseCrawl(RequestHeader):
                         job_brief, job_addr, job_evaluate, contact_person = self.second_request_parser(link, url_name)
                         if not job_evaluate:
                             job_evaluate = ''
-                        # print({
-                        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                        #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                        #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                        #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                        #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': job_evaluate,
-                        #     'company_name': company_name, 'company_type': company_type,
-                        #     'company_status': company_status, 'phone': '', 'driver_license': '',
-                        #     'company_scale': company_scale, 'company_brief': '',
-                        #     'contact_person': contact_person, 'company_comment': ''
-                        # })
+
                         self.jobs.append({
                             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                             'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1782,17 +1729,7 @@ class BaseCrawl(RequestHeader):
                     job_tags, job_people_number, job_brief, job_addr, company_property, company_brief, job_property, number_recruits, contact_person = self.second_request_parser(
                         link, url_name)
                     company_scale = company_property + '/' + company_scale
-                    # print({
-                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    #     'job_addr': job_addr, 'pub_date': '', 'end_time': '', 'age': '', 'sex': '',
-                    #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    #     'company_name': company_name, 'company_type': company_type,
-                    #     'company_status': '', 'phone': '', 'driver_license': '',
-                    #     'company_scale': company_scale, 'company_brief': company_brief,
-                    #     'contact_person': contact_person, 'company_comment': ''
-                    # })
+
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1885,17 +1822,7 @@ class BaseCrawl(RequestHeader):
                             self.second_request_parser(link, url_name)
                         number_recruits, job_addr, age, lang = self.second_request_parser(link, url_name)
 
-                        # print({
-                        #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                        #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                        #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                        #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
-                        #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                        #     'company_name': company_name, 'company_type': company_type,
-                        #     'company_status': '', 'phone': '', 'driver_license': '',
-                        #     'company_scale': company_scale, 'company_brief': company_brief,
-                        #     'contact_person': '', 'company_comment': ''
-                        # })
+
                         self.jobs.append({
                             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                             'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -1954,17 +1881,7 @@ class BaseCrawl(RequestHeader):
                     link, url_name)
                 job_title = ''.join(job_title) if job_title else ''
                 edu = edu[0] if edu else ''
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': '',
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2058,17 +1975,7 @@ class BaseCrawl(RequestHeader):
                     else:
                         job_title, company_name, number_recruits, company_scale, company_brief, job_brief, company_type, job_type = self.second_request_parser(
                             link, url_name)
-                    # print({
-                    #     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
-                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                    #     'edu': '', 'ex': '', 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    #     'company_name': company_name, 'company_type': company_type,
-                    #     'company_status': '', 'phone': '', 'driver_license': '',
-                    #     'company_scale': company_scale, 'company_brief': '',
-                    #     'contact_person': '', 'company_comment': ''
-                    # })
+
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2158,17 +2065,7 @@ class BaseCrawl(RequestHeader):
                     job=job_id, com=com_id)
                 company_type, company_scale, company_link, number_recruits = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': '',
-                #     'contact_person': contact_person, 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2220,17 +2117,7 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[2]/a/@href')[0]
                 company_name, job_title, number_recruits, edu, ex, sex, job_tags, pub_date, job_brief, job_addr, end_time = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': '', 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': '学校/兴趣班/培训机构',
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': '', 'company_brief': '',
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2325,17 +2212,7 @@ class BaseCrawl(RequestHeader):
                     edu = ''
                 if not ex:
                     ex = ''
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': '', 'company_brief': company_brief,
-                #     'contact_person': contact_person, 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2450,18 +2327,7 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[1]/a/@href')[0]
                 number_recruits, job_type, job_brief, job_addr, company_type, company_scale, company_brief = self.second_request_parser(
                     link, url_name)
-                #
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief,
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2538,17 +2404,7 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div/div[1]/h3/a/@href')[0]
                 lang, age, job_tags, job_brief, job_addr, company_scale, company_brief = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': company_status, 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief,
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2645,17 +2501,7 @@ class BaseCrawl(RequestHeader):
                 pub_date = self.get_current_date(temp_pub_date)
                 job_tags, job_addr, number_recruits, edu, ex, job_brief, age, company_name, company_scale, company_type, company_brief = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': '',
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2743,17 +2589,7 @@ class BaseCrawl(RequestHeader):
                 link = current_url + temp_link
                 job_tags, job_addr, number_recruits, edu, ex, job_brief, age, company_name, company_scale, company_type, company_brief = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': '',
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2826,17 +2662,7 @@ class BaseCrawl(RequestHeader):
                 number_recruits, pub_date, job_addr, job_brief, company_brief, company_type, company_scale = self.second_request_parser(
                     link, url_name)
 
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief,
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2938,18 +2764,7 @@ class BaseCrawl(RequestHeader):
                         company_comment.append(c)
                     elif isinstance(com, str):
                         company_comment.append(com)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
-                #     'job_evaluate': job_evaluate,
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief,
-                #     'contact_person': '', 'company_comment': company_comment
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3036,17 +2851,7 @@ class BaseCrawl(RequestHeader):
                 company_name, job_tags, sex, driver_license, job_brief, company_brief, job_property = self.second_request_parser(
                     link, url_name)
 
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': driver_license,
-                #     'company_scale': company_scale, 'company_brief': company_brief,
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3110,17 +2915,7 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./li[@class="search_post"]/a/@href')[0]
                 job_tags, number_recruits, job_addr, job_area, job_brief, company_type, contact_person, age, major, pub_date, company_scale, edu, ex = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': major,
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': '',
-                #     'contact_person': contact_person, 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': major,
@@ -3220,17 +3015,7 @@ class BaseCrawl(RequestHeader):
                 pub_date = item.xpath('./div/div/time/@datetime')[0]
                 job_brief, job_level, job_type, company_type, job_property = self.second_request_parser(link, url_name)
 
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                #     'edu': '', 'ex': job_level, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': '', 'company_brief': '',
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3296,16 +3081,7 @@ class BaseCrawl(RequestHeader):
                     link = 'http://www.doumi.com' + link[0]
                 sex, age, job_brief, job_addr, company_type, company_name, edu, ex = self.second_request_parser(link,
                                                                                                                 url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': '', 'end_time': '', 'age': age, 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': '', 'job_link': link, 'number_recruits': number_recruits,
-                #     'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': '', 'company_brief': '', 'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3400,17 +3176,7 @@ class BaseCrawl(RequestHeader):
                     contact_person, ex, job_brief, job_addr, company_type, company_scale, company_brief = self.second_request_parser(
                         link, url_name)
                     link = 'http://www.gongzuochong.com/{c}/{tg}/{id}'.format(c=city_code, tg=job_link_args, id=job_id)
-                    # print({
-                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                    #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                    #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                    #     'company_name': company_name, 'company_type': company_type,
-                    #     'company_status': '', 'phone': '', 'driver_license': '',
-                    #     'company_scale': company_scale, 'company_brief': company_brief,
-                    #     'contact_person': contact_person, 'company_comment': ''
-                    # })
+
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                         'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3487,17 +3253,7 @@ class BaseCrawl(RequestHeader):
                     link = 'https://hr.ofweek.com' + link[0]
                 company_type, job_addr, job_property, number_recruits, age, job_brief = self.second_request_parser(link,
                                                                                                                    url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': '', 'sex': '',
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': '', 'job_link': link, 'number_recruits': '', 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': '', 'company_brief': '',
-                #     'contact_person': '', 'company_comment': ''
-                # })
+
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3564,17 +3320,6 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./td[1]/a/@href')[0]
                 job_type, job_area, sex, age, lang, job_brief, company_scale, company_type, company_brief, salary = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                #     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': lang, 'job_brief': job_brief,
-                #     'job_tags': '', 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief,
-                #     'contact_person': '', 'company_comment': ''
-                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3665,17 +3410,6 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[@class="search_job_left_siaber"]/div[1]/a/@href')[0]
                 job_brief, marriage, contact_person, job_tags, age, sex, number_recruits, pub_date, company_brief, job_property = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': '', 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits,
-                #     'job_evaluate': '', 'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': '', 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': company_brief,
-                #     'contact_person': contact_person, 'company_comment': ''
-                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3834,17 +3568,6 @@ class BaseCrawl(RequestHeader):
                     job_addr2, job_brief = self.second_request_parser(link, url_name)
                     if not job_addr:
                         job_addr = job_addr2
-                    # print({
-                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': age, 'sex': sex,
-                    #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    #     'company_name': company_name, 'company_type': company_type,
-                    #     'company_status': '', 'phone': phone, 'driver_license': '',
-                    #     'company_scale': company_scale, 'company_brief': company_brief,
-                    #     'contact_person': '', 'company_comment': ''
-                    # })
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3934,17 +3657,6 @@ class BaseCrawl(RequestHeader):
                     job_addr2, job_brief = self.second_request_parser(link, url_name)
                     if not job_addr:
                         job_addr = job_addr2
-                    # print({
-                    #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
-                    #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                    #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': end_time, 'age': age, 'sex': sex,
-                    #     'edu': '', 'ex': '', 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                    #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                    #     'company_name': company_name, 'company_type': '',
-                    #     'company_status': '', 'phone': '', 'driver_license': '',
-                    #     'company_scale': '', 'company_brief': company_brief,
-                    #     'contact_person': '', 'company_comment': ''
-                    # })
                     self.jobs.append({
                         'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                         'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -4001,17 +3713,6 @@ class BaseCrawl(RequestHeader):
                 link = item.xpath('./div[2]/div[@class="td-j-name"]/a/@href')[0]
                 pub_date, sex, age, job_addr, job_brief, contact_person, phone, company_scale, company_type = self.second_request_parser(
                     link, url_name)
-                # print({
-                #     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
-                #     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
-                #     'job_addr': job_addr, 'pub_date': pub_date, 'end_time': '', 'age': age, 'sex': sex,
-                #     'edu': edu, 'ex': ex, 'marriage': '', 'lang': '', 'job_brief': job_brief,
-                #     'job_tags': job_tags, 'job_link': link, 'number_recruits': number_recruits, 'job_evaluate': '',
-                #     'company_name': company_name, 'company_type': company_type,
-                #     'company_status': '', 'phone': phone, 'driver_license': '',
-                #     'company_scale': company_scale, 'company_brief': '',
-                #     'contact_person': contact_person, 'company_comment': ''
-                # })
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '教职教师',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -4127,18 +3828,24 @@ class GeventCrawl(BaseCrawl):
         for args in self.search_args:
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
-                url = urls.get('url')
-                url_name = urls.get('type')
-                domain = url_name.split('_', 1)[1]
-                print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
-                timer = self.get_random_time()
-                gevent.sleep(timer)
-                task = gevent_pool.spawn(self.request_url, url, url_name, args_urlencode, args)
-                tasks.append(task)
-        done = gevent.joinall(tasks)
-        if done:
-            gevent.killall(tasks)
-        data = duplicate_removal(self.jobs)
+                if self.is_end:
+                    print('全部url已爬取完毕')
+                    CRAWL_LOG.info('all target urls request finished')
+                    return self.jobs
+                else:
+                    url = urls.get('url')
+                    url_name = urls.get('type')
+                    domain = url_name.split('_', 1)[1]
+                    print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
+                    timer = self.get_random_time()
+                    gevent.sleep(timer)
+                    task = gevent_pool.spawn(self.request_url, url, url_name, args_urlencode, args)
+                    tasks.append(task)
+        if tasks:
+            done = gevent.joinall(tasks)
+            if done:
+                gevent.killall(tasks)
+        data = duplicate_removal(self.jobs)     # 去重
         self.jobs = data
 
     def request_format_site(self, url_name, args, args_urlencode, index, page=None):
@@ -4195,15 +3902,21 @@ class ThreadPoolCrawl(BaseCrawl):
         for args in self.search_args:
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
-                url = urls.get('url')
-                url_name = urls.get('type')
-                domain = url_name.split('_', 1)[1]
-                print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
-                timer = self.get_random_time()
-                time.sleep(timer)
-                task = thread.submit(self.request_url, url, url_name, args_urlencode, args)
-                tasks.append(task)
-        wait(tasks)
+                if self.is_end:
+                    print('全部url已爬取完毕')
+                    CRAWL_LOG.info('all target urls request finished')
+                    return self.jobs
+                else:
+                    url = urls.get('url')
+                    url_name = urls.get('type')
+                    domain = url_name.split('_', 1)[1]
+                    print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
+                    timer = self.get_random_time()
+                    time.sleep(timer)
+                    task = thread.submit(self.request_url, url, url_name, args_urlencode, args)
+                    tasks.append(task)
+        if tasks:
+            wait(tasks)
         data = duplicate_removal(self.jobs)
         self.jobs = data
 
@@ -4259,17 +3972,22 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
         for args in self.search_args:
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
-                url = urls.get('url')
-                url_name = urls.get('type')
-                domain = url_name.split('_', 1)[1]
-                print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
-                timer = self.get_random_time()
-                time.sleep(timer)
-                task = loop.run_in_executor(thread, self.request_url, url, url_name, args_urlencode, args)
-                tasks.append(task)
-        loop.run_until_complete(asyncio.wait(tasks))
-        # 异步操作会有重复的数据,去重
-        data = duplicate_removal(self.jobs)
+                if self.is_end:
+                    print('全部url已爬取完毕')
+                    CRAWL_LOG.info('all target urls request finished')
+                    return self.jobs
+                else:
+                    url = urls.get('url')
+                    url_name = urls.get('type')
+                    domain = url_name.split('_', 1)[1]
+                    print('正在爬取 %s 网站的 %s 相关岗位数据' % (domain, args))
+                    timer = self.get_random_time()
+                    time.sleep(timer)
+                    task = loop.run_in_executor(thread, self.request_url, url, url_name, args_urlencode, args)
+                    tasks.append(task)
+        if tasks:
+            loop.run_until_complete(asyncio.wait(tasks))
+        data = duplicate_removal(self.jobs)     # 异步操作会有重复的数据,去重
         self.jobs = data
 
     # 异步的loop下不能再开loop，所以直接继承父类的该方法
@@ -4314,8 +4032,8 @@ def save_redis(jobs, key=None):
             if cont != jobs:
                 jobs.extend(cont)
                 jobs = duplicate_removal(jobs)
-                print('数据库内已存有 %s 个职位信息' % len(jobs))
-                conn.set(key, str(jobs))
+        print('数据库内已存有 %s 个职位信息' % len(jobs))
+        conn.set(key, str(jobs))
 
 
 def save_url_redis(se, key=None):
@@ -4336,16 +4054,17 @@ def save_url_redis(se, key=None):
         except redis.exceptions.ConnectionError as e:
             print('协程因为并发性能太强导致并发量太大,redis数据库无法承受,请去掉一部分待爬取网站或者改用线程池的方式', e)
             gevent.sleep(2)
+            time.sleep(2)
         if cont:
             cont = eval(cont)
             se.update(cont)
         conn.set(key, str(se))
-        if key == 'target_urls':
-            print('数据库内存有 %s 个目标url待爬取' % len(se))
-        elif key == 'market_urls':
-            print('已爬取了 %s 个目标url' % len(se))
-        elif key == 'invalid_urls':
-            print('已删除 %s 个无效目标url' % len(se))
+        # if key == 'target_urls':
+        #     print('数据库内存有 %s 个目标url待爬取' % len(se))
+        # elif key == 'market_urls':
+        #     print('已爬取了 %s 个目标url' % len(se))
+        # elif key == 'invalid_urls':
+        #     print('已删除 %s 个无效目标url' % len(se))
 
 
 def cover_url_redis(se, key=None):
@@ -4360,7 +4079,7 @@ def cover_url_redis(se, key=None):
         key = 'target_urls'
     if se:
         conn.set(key, str(se))
-        print('已重新存储 %s 个有效的目标url' % len(se))
+        # print('已重新存储 %s 个有效的目标url' % len(se))
 
 
 def save_market_page_redis(page, key=None):
@@ -4406,6 +4125,8 @@ def get_url_redis(key=None):
         cont = conn.get(key)
     except redis.exceptions.ConnectionError as e:
         print('协程因为并发性能太强导致并发量太大,redis数据库无法承受,请去掉一部分待爬取网站或者改用线程池的方式', e)
+        gevent.sleep(2)
+        time.sleep(2)
     if cont:
         urls = eval(cont)
         return urls
@@ -4438,6 +4159,7 @@ def main(cls=None):
 
 
 if __name__ == '__main__':
+    '注意：三种方式不要同时开启，一次只能开一种方式，不然那导致程序运行混乱，最后的结果也是紊乱的'
     main()  # 协程方式, 测试时需要查看报错结果可以使用gevent协程的方法
     # main(ThreadPoolCrawl)  # 线程池的方式
     # main(ThreadPoolAsynicCrawl)  # 线程池+异步的方式

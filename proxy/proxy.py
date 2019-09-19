@@ -1077,7 +1077,6 @@ def save_redis(proxy_list, key=None):
     conn = redis.Redis(connection_pool=POOL)
     if not key:
         key = 'proxies'
-
     # 检测是否已有值
     cont = conn.get(key)
     if cont:
