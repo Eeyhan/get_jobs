@@ -114,15 +114,15 @@ class BaseCrawl(RequestHeader):
 
     def __init__(self):
         super(BaseCrawl, self).__init__()
-        self.header = self.get_header               # 请求头
-        self.request_urls = self.get_request_urls   # 待格式化的所有目标请求站
-        self.proxy_list = None                      # 代理列表
-        self.target_urls = None                     # 目标url
-        self.target_urls_dict = dict()              # 目标url的字典形式
-        self.invalid_urls = set()                   # 无效url
-        self.jobs = []                              # 爬取到的职位信息
-        self.search_args = SEARCH_ARGS              # 搜索关键词列表
-        self.is_end = False                         # 完结信号
+        self.header = self.get_header  # 请求头
+        self.request_urls = self.get_request_urls  # 待格式化的所有目标请求站
+        self.proxy_list = None  # 代理列表
+        self.target_urls = None  # 目标url
+        self.target_urls_dict = dict()  # 目标url的字典形式
+        self.invalid_urls = set()  # 无效url
+        self.jobs = []  # 爬取到的职位信息
+        self.search_args = SEARCH_ARGS  # 搜索关键词列表
+        self.is_end = False  # 完结信号
 
     def get_urls_flag(self, url_name):
         """
@@ -591,7 +591,6 @@ class BaseCrawl(RequestHeader):
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
                 if self.is_end:
-                    print('全部url已爬取完毕')
                     CRAWL_LOG.info('all target urls request finished')
                     return self.jobs
                 else:
@@ -703,8 +702,12 @@ class BaseCrawl(RequestHeader):
             target_urls, target_urls_dict = self.generate_reqeust_target_urls(url, url_name, city_code, args,
                                                                               args_urlencode, index, is_generate=True)
 
+            if not target_urls:
+                self.is_end = True
+                print('请配置需要爬取的网站，再运行程序')
+                return
             # 保存所有的目标url，这里如果是协程或者多线程，可能会导致页码和真实情况有少量偏移，正常现象
-            if target_urls:
+            else:
                 self.target_urls = target_urls
                 self.target_urls_dict = target_urls_dict
                 save_url_redis(target_urls)
@@ -714,39 +717,37 @@ class BaseCrawl(RequestHeader):
         # 如果数据库有值(第二次及之后的运行程序)
         else:
             # 生成所有的目标url
-            self.target_urls = get_url_redis()
             target_urls, self.target_urls_dict = self.generate_reqeust_target_urls(url, url_name, city_code, args,
                                                                                    args_urlencode, index,
                                                                                    is_generate=True)
+            target_urls = target_urls if target_urls else set()
             market_urls = get_url_redis('market_urls')
+            market_urls = market_urls if market_urls else set()
             invalid_urls = get_url_redis('invalid_urls')
-            # 去掉无效的url
-            if invalid_urls:
-                self.target_urls -= invalid_urls
-                if market_urls:
-                    market_urls -= invalid_urls
-            else:
-                invalid_urls = set()
-            # 比对数据
-            temp_compare_url = self.target_urls
+            invalid_urls = invalid_urls if invalid_urls else set()
+
+            # 比对数据，得到最新的待爬取的目标url
+
+            if target_urls:  # 如果有最新的目标url
+                temp_compare_url = self.target_urls
+                temp_compare_url.update(market_urls, invalid_urls)
+                if target_urls != temp_compare_url:  # 数据库内的目标url不完整(上次启动意外终止;有新增的网站)
+                    self.target_urls = target_urls - invalid_urls
+            # 如果没有最新的目标url
+            self.target_urls -= invalid_urls
             if market_urls:
-                if market_urls == self.target_urls:
+                market_urls -= invalid_urls
+                if self.target_urls - market_urls:  # 已爬取完毕
+                    print('全部目标url已爬取完毕')
+                    CRAWL_LOG.info('all target urls request finished')
                     self.is_end = True
                     return
-                else:  # 未爬取完毕(断点续爬)
-                    # 如果有已爬取过的url,加上已爬取和无效的url再和新生成的所有目标url对比,不等则重新赋值
-                    temp_compare_url.update(market_urls, invalid_urls)
-                    if target_urls != temp_compare_url:  # 数据库内的目标url不完整(上次启动意外终止;有新增的网站)
-                        self.target_urls = target_urls - invalid_urls
-                    self.target_urls -= market_urls
-            else:  # 如果无已爬取过的url,加上无效的url和新生成的所有url对比,不等则重新赋值
-                temp_compare_url.update(invalid_urls)
-                if temp_compare_url != target_urls:  # 数据库内的目标url不完整(上次启动意外终止;有新增的网站)
-                    self.target_urls = target_urls - invalid_urls
-            self.flush_target_urls_dict()
-            save_url_redis(self.target_urls)
-            # 开始遍历请求
-            self.generate_reqeust_target_urls(url, url_name, city_code, args, args_urlencode, index)
+            self.target_urls -= market_urls
+            if self.target_urls and not self.is_end:
+                self.flush_target_urls_dict()
+                save_url_redis(self.target_urls)
+                # 开始遍历请求
+                self.generate_reqeust_target_urls(url, url_name, city_code, args, args_urlencode, index)
 
     def generate_reqeust_invalid_urls(self, url, city_code, url_name, args, args_urlencode, page=None):
         """
@@ -765,7 +766,8 @@ class BaseCrawl(RequestHeader):
         for i in range(page, END_PAGE):
             end_url, end_url_dict = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, set(),
                                                          dict())
-            invalid_target_urls.update(end_url)
+            if end_url:
+                invalid_target_urls.update(end_url)
         return invalid_target_urls
 
     def generate_reqeust_target_urls(self, url, url_name, city_code, args, args_urlencode, index, is_generate=False):
@@ -920,7 +922,7 @@ class BaseCrawl(RequestHeader):
             target_urls_dict.update({temp_url: url_name})
             return target_urls, target_urls_dict
         else:
-            return '', ''
+            return set(), set()
 
     def distribute_request_url(self, target_url, url_name, args, args_urlencode, index, page, city_code=None):
         """
@@ -946,11 +948,11 @@ class BaseCrawl(RequestHeader):
                 # 删除对应的无效url
                 invalid_url = self.generate_reqeust_invalid_urls(target_url, city_code, url_name, args,
                                                                  args_urlencode, page)
-                if invalid_url:
-                    self.invalid_urls.update(invalid_url)
+                self.invalid_urls.update(invalid_url)
+                if self.invalid_urls:
                     self.target_urls -= self.invalid_urls
-                    target_urls = self.target_urls
                     save_url_redis(self.invalid_urls, 'invalid_urls')
+                    target_urls = self.target_urls
                     cover_url_redis(target_urls)  # 覆盖存储
                 break
             try:
@@ -1313,7 +1315,6 @@ class BaseCrawl(RequestHeader):
         job_evaluate_title = etree_html.xpath('//*[@id="j-job-interview"]/dl/dd/h2/a/text()')
         job_evaluate_content = etree_html.xpath('//p[@class="c_s_result_text mb15"]/text()')
         job_evaluate = ''.join(job_evaluate_title).strip() + ',' + ''.join(job_evaluate_content).strip()
-
 
         self.jobs.append({
             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '', 'job_property': job_property,
@@ -1821,7 +1822,6 @@ class BaseCrawl(RequestHeader):
                             link = 'http://www.job5156.com' + link
                             self.second_request_parser(link, url_name)
                         number_recruits, job_addr, age, lang = self.second_request_parser(link, url_name)
-
 
                         self.jobs.append({
                             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
@@ -2662,7 +2662,6 @@ class BaseCrawl(RequestHeader):
                 number_recruits, pub_date, job_addr, job_brief, company_brief, company_type, company_scale = self.second_request_parser(
                     link, url_name)
 
-
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                     'job_property': '', 'job_status': '', 'job_area': job_area, 'major': '',
@@ -2851,7 +2850,6 @@ class BaseCrawl(RequestHeader):
                 company_name, job_tags, sex, driver_license, job_brief, company_brief, job_property = self.second_request_parser(
                     link, url_name)
 
-
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3014,7 +3012,6 @@ class BaseCrawl(RequestHeader):
                 job_area = item.xpath('./div/div/span[1]/text()')[0]
                 pub_date = item.xpath('./div/div/time/@datetime')[0]
                 job_brief, job_level, job_type, company_type, job_property = self.second_request_parser(link, url_name)
-
 
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': '', 'job_type': job_type,
@@ -3828,11 +3825,7 @@ class GeventCrawl(BaseCrawl):
         for args in self.search_args:
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
-                if self.is_end:
-                    print('全部url已爬取完毕')
-                    CRAWL_LOG.info('all target urls request finished')
-                    return self.jobs
-                else:
+                if not self.is_end:
                     url = urls.get('url')
                     url_name = urls.get('type')
                     domain = url_name.split('_', 1)[1]
@@ -3845,7 +3838,7 @@ class GeventCrawl(BaseCrawl):
             done = gevent.joinall(tasks)
             if done:
                 gevent.killall(tasks)
-        data = duplicate_removal(self.jobs)     # 去重
+        data = duplicate_removal(self.jobs)  # 去重
         self.jobs = data
 
     def request_format_site(self, url_name, args, args_urlencode, index, page=None):
@@ -3902,11 +3895,7 @@ class ThreadPoolCrawl(BaseCrawl):
         for args in self.search_args:
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
-                if self.is_end:
-                    print('全部url已爬取完毕')
-                    CRAWL_LOG.info('all target urls request finished')
-                    return self.jobs
-                else:
+                if not self.is_end:
                     url = urls.get('url')
                     url_name = urls.get('type')
                     domain = url_name.split('_', 1)[1]
@@ -3972,11 +3961,7 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
         for args in self.search_args:
             args_urlencode = urllib.parse.quote(args)
             for urls in self.request_urls:
-                if self.is_end:
-                    print('全部url已爬取完毕')
-                    CRAWL_LOG.info('all target urls request finished')
-                    return self.jobs
-                else:
+                if not self.is_end:
                     url = urls.get('url')
                     url_name = urls.get('type')
                     domain = url_name.split('_', 1)[1]
@@ -3987,7 +3972,7 @@ class ThreadPoolAsynicCrawl(BaseCrawl):
                     tasks.append(task)
         if tasks:
             loop.run_until_complete(asyncio.wait(tasks))
-        data = duplicate_removal(self.jobs)     # 异步操作会有重复的数据,去重
+        data = duplicate_removal(self.jobs)  # 异步操作会有重复的数据,去重
         self.jobs = data
 
     # 异步的loop下不能再开loop，所以直接继承父类的该方法
