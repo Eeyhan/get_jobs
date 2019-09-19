@@ -4140,7 +4140,7 @@ def main(cls=None):
     save_redis(result)  # 存入redis数据库
     # print(result)
     end = time.time() - start
-    print('总共用时：%s' % end)
+    print('全部url爬取完毕！总共用时：%s' % end)
 
 
 if __name__ == '__main__':
