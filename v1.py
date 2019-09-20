@@ -859,11 +859,7 @@ class BaseCrawl(RequestHeader):
         elif 'parser_ganji_it' == url_name:
             i = (i - 1) * 32
             temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-        elif '58' in url_name:
-            temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-        elif 'parser_chinahr' == url_name:
-            temp_url = url.format(c=city_code, p=i, q=args_urlencode)
-        elif 'gongzuochong' in url_name:
+        elif url_name in {'parser_58', 'parser_gongzuochong', 'parser_chinahr'}:
             temp_url = url.format(c=city_code, p=i, q=args_urlencode)
         elif 'baidu' in url_name:
             city_code1 = urllib.parse.quote(city_code)
@@ -892,15 +888,13 @@ class BaseCrawl(RequestHeader):
             temp_url = url.format(p=i, q=args_urlencode)
         elif 'jobcn' in url_name:
             temp_url = url
-        elif 'parser_jiaoshizhaopin' == url_name:
+        elif url_name in {'parser_jiaoshizhaopin', 'parser_telecomhr'}:
             args = urllib.parse.quote(args, encoding='gb2312')
             temp_url = url.format(p=i, q=args)
         elif 'shuobo' in url_name and i == 1:
+            '其他条件已经由else接收'
             temp_url = 'http://www.51shuobo.com/s/result/kt1_kw-{q}/'.format(q=args_urlencode)
-        elif 'liepin' in url_name:
-            i -= 1
-            temp_url = url.format(p=i, q=args_urlencode)
-        elif 'job1001' in url_name:
+        elif url_name in {'parser_liepin', 'parser_job1001'}:
             i -= 1
             temp_url = url.format(p=i, q=args_urlencode)
         elif 'linkin' in url_name:
@@ -910,9 +904,6 @@ class BaseCrawl(RequestHeader):
                 i = 0
             i *= 25
             temp_url = url.format(c=c, p=i, q=args_urlencode)
-        elif 'telecomhr' in url_name:
-            args = urllib.parse.quote(args, encoding='gb2312')
-            temp_url = url.format(p=i, q=args)
         else:
             temp_url = url.format(p=i, q=args_urlencode)
         if temp_url:
@@ -1805,7 +1796,6 @@ class BaseCrawl(RequestHeader):
                             link = 'http://www.job5156.com' + link
                             self.second_request_parser(link, url_name)
                         number_recruits, job_addr, age, lang = self.second_request_parser(link, url_name)
-
                         self.jobs.append({
                             'index': index, 'job_title': job_title, 'salary': salary, 'job_type': job_type,
                             'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3214,7 +3204,6 @@ class BaseCrawl(RequestHeader):
                     link = 'https://hr.ofweek.com' + link[0]
                 company_type, job_addr, job_property, number_recruits, age, job_brief = self.second_request_parser(link,
                                                                                                                    url_name)
-
                 self.jobs.append({
                     'index': index, 'job_title': job_title, 'salary': salary, 'job_type': '',
                     'job_property': job_property, 'job_status': '', 'job_area': job_area, 'major': '',
@@ -3768,7 +3757,6 @@ class BaseCrawl(RequestHeader):
             self.request_site()
         except KeyboardInterrupt as e:
             # 如果中断程序，把已获取到的数据先保存
-            # print(e)
             save_redis(self.jobs)
             CRAWL_LOG.error('entered keyboard ctrl + c')
             sys.exit()
