@@ -758,7 +758,7 @@ class BaseCrawl(RequestHeader):
         """
         invalid_target_urls = set()
         if not page:
-            page = 1
+            page = 0
         for i in range(page, END_PAGE):
             end_url, end_url_dict = self.distribute_urls(url, url_name, city_code, args, args_urlencode, i, set(),
                                                          dict())
@@ -779,7 +779,7 @@ class BaseCrawl(RequestHeader):
         :return: 返回所有的待爬取的目标url
         """
         db_page = get_market_page_redis()
-        page = db_page if db_page else 1
+        page = db_page if db_page else 0
         if page >= END_PAGE:
             print('设置有误！数据库内的页码不能大于等于配置文件的页码，请重新设置再运行程序')
         # 生成目标url
