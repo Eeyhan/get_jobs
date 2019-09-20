@@ -127,7 +127,7 @@ LAGOU_SHOW = '090fea62d1b84e1d982a52cf822b20bc'
 # boss直聘cookie
 '如果失效可以用浏览器抓包工具重新获取，只需要__zp_stoken__字段'
 BOSS_COOKIE = {
-    'cookie': '__zp_stoken__=93d4XzK05dbcaVTFg%2B1EnuGLSMdShC6U%2BJsLIA75gb0VZC0p8KVIFztMRdMdk4gEnH4D57a57afd1aCRzOPl0CMIKw%3D%3D'
+    'cookie': '__zp_stoken__=1c48c63zVGOGKBxVr5XR52KDllup9rYfQmi%2F3uzL9OjJwVnyJRn6XQO0W5ldLp2gTcuH0H05s8iAIhiHR%2BUSnzxWSg%3D%3D'
 }
 
 # 各大招聘网站
@@ -261,11 +261,11 @@ SEARCH_ARGS = ['Golang', 'C', '嵌入式', 'Hadoop', '图像处理', '架构师'
 #                '行政总监']
 
 # 定时自动保存已爬取的职位的间隔时间
-'可自行设置，单位为秒'
+'可自行设置，单位为秒，根据你配置的目标站点爬取的时间做大概预判，防止出现爬取完毕后数据还未保存的情况'
 INTERVAL = 30
 
 # 爬取深度,最大页码
-'可自行设置，但一般情况下每个网站搜出来的职位最多就50页左右'
+'可自行设置，但一般情况下每个网站搜出来的职位最多就50页左右，且要大于1'
 END_PAGE = 30
 
 # 最大协程数
