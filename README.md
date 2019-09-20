@@ -83,8 +83,8 @@
 	* (更多待增加......)
 
 + 程序流程图
-
-	* ![程序流程](http://naotu.baidu.com/file/13a4a53267c37447a5d31e8a90faea48?token=009bfa9bc45091a0)
+	
+	* [程序流程](http://naotu.baidu.com/file/13a4a53267c37447a5d31e8a90faea48?token=009bfa9bc45091a0)
 
 
 ## 主要功能：
